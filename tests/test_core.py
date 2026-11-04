@@ -139,7 +139,8 @@ def test_full_rip_job(tmp_path, fmt, quality):
         assert data.tobytes() == TrackReader(d, toc, 0).rip(1, False).pcm   # bit-exact
     folder = rep.folder
     names = os.listdir(folder)
-    assert "folder.jpg" in names and any(n.endswith(".cue") for n in names)
+    assert "folder.jpg" in names
+    assert not any(n.endswith((".cue", ".m3u8")) for n in names)    # off by default
     assert not any(n.endswith(".log") for n in names)               # log kept out of the music folder
     assert os.path.exists(rep.log_path) and "logs" in rep.log_path
 

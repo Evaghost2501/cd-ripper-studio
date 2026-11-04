@@ -199,3 +199,34 @@ def test_ui_size_change_resizes_everything(win):
     assert "hello log" in w.logbox.toPlainText()
     assert len(w.findChildren(type(w._toolbar))) == 1          # no duplicated toolbars
     w.set_ui_size(9)
+
+
+def test_untitled_tracks_unchecked_by_default(win):
+    w, app, _ = win
+    from cdripper.gui.main_window import COL
+    from PySide6.QtCore import Qt
+    d = w.drive()
+    w._disc_loaded((d.read_toc(), d.read_cdtext()))           # CD-Text titles only for tracks 1, 2
+    assert [t.rip for t in w.album.tracks] == [True, True, False, False]
+    assert w.table.item(2, COL["rip"]).checkState() == Qt.Unchecked
+    w.table.item(2, COL["title"]).setText("Third")            # typing a title ticks it
+    assert w.album.tracks[2].rip and w.table.item(2, COL["rip"]).checkState() == Qt.Checked
+    w.table.item(0, COL["rip"]).setCheckState(Qt.Unchecked)   # manual choice wins…
+    w.album.tracks[0].title = "Renamed"; w.refresh_tracks()
+    assert w.album.tracks[0].rip is False                      # …even after the title changes
+    w.table.item(3, COL["rip"]).setCheckState(Qt.Checked)     # untitled but ticked by hand
+    assert w.album.tracks[3].rip is True
+
+
+def test_playlist_and_cue_off_by_default_and_migrated(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from cdripper.core.settings import Settings, config_dir
+    s = Settings()
+    assert s.write_m3u is False and s.write_cue is False
+    with open(os.path.join(config_dir(), "settings.json"), "w") as f:
+        json.dump({"write_m3u": True, "write_cue": True}, f)   # saved by an older version
+    s = Settings.load()
+    assert s.write_m3u is False and s.write_cue is False
+    s.write_cue = True; s.save()                               # a later explicit choice is kept
+    assert Settings.load().write_cue is True

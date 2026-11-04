@@ -41,6 +41,7 @@ class TrackMeta:
     mb_recording_id: str = ""
     length: int = 0          # sectors (from TOC)
     rip: bool = True
+    rip_user: bool = False   # True once the user ticked/unticked it; otherwise rip = "has a title"
 
 
 @dataclass

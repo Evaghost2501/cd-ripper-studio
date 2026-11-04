@@ -673,7 +673,8 @@ class MainWindow(QMainWindow):
                     setattr(t, f, v)
             if not t.length:
                 t.length = src.length
-            t.rip = src.rip if replace else t.rip
+            if replace:
+                t.rip, t.rip_user = src.rip, src.rip_user
         if not cur.tracks:   # no disc: take tracks as they are
             cur.tracks = [TrackMeta(**{**t.__dict__}) for t in a.tracks]
         self.refresh_all()
@@ -811,7 +812,14 @@ class MainWindow(QMainWindow):
         self._sync_genre_buttons()
         self.refresh_tracks()
 
+    def _auto_rip(self):
+        """Tracks without a title are not ripped by default; a manual tick/untick always wins."""
+        for t in self.album.tracks:
+            if not t.rip_user:
+                t.rip = bool(t.title.strip())
+
     def refresh_tracks(self):
+        self._auto_rip()
         self.table.blockSignals(True)
         self.table.setRowCount(len(self.album.tracks))
         for r, t in enumerate(self.album.tracks):
@@ -878,8 +886,14 @@ class MainWindow(QMainWindow):
         key = COLS[c][0]
         if key == "rip":
             t.rip = item.checkState() == Qt.Checked
+            t.rip_user = True
         elif key in EDITABLE:
             setattr(t, key, item.text().strip())
+            if key == "title" and not t.rip_user:   # typing a title ticks the track
+                self._auto_rip()
+                self.table.blockSignals(True)
+                self.table.item(r, COL["rip"]).setCheckState(Qt.Checked if t.rip else Qt.Unchecked)
+                self.table.blockSignals(False)
         self._update_preview()
 
     def _cell_dbl(self, r, c):
@@ -889,7 +903,7 @@ class MainWindow(QMainWindow):
 
     def _set_all_rip(self, v):
         for t in self.album.tracks:
-            t.rip = v
+            t.rip, t.rip_user = v, True
         self.refresh_tracks()
 
     def selected_rows(self) -> list[int]:
@@ -958,7 +972,7 @@ class MainWindow(QMainWindow):
     def _rip_only_selected(self):
         rows = set(self.selected_rows())
         for i, t in enumerate(self.album.tracks):
-            t.rip = i in rows
+            t.rip, t.rip_user = i in rows, True
         self.refresh_tracks()
 
     # ================================================================ tools
@@ -1131,7 +1145,9 @@ class MainWindow(QMainWindow):
         if not d or not self.toc:
             return QMessageBox.warning(self, "리핑", "오디오 CD가 없습니다.")
         if not any(t.rip for t in self.album.tracks):
-            return QMessageBox.warning(self, "리핑", "선택된 트랙이 없습니다.")
+            return QMessageBox.warning(self, "리핑", "선택된 트랙이 없습니다.\n\n"
+                                       "제목이 있는 트랙만 자동으로 체크됩니다. 제목을 입력하거나 "
+                                       "(웹 검색·웹캠 인식·붙여넣기) 리핑할 트랙을 직접 체크하세요.")
         missing = [t.number for t in self.album.tracks if t.rip and not t.title]
         if not self.album.album or missing:
             msg = []

@@ -33,8 +33,9 @@ class Settings:
     embed_cover: bool = True
     cover_max_px: int = 1000             # 0 = original size
     save_cover_file: bool = True         # folder.jpg next to tracks
-    write_m3u: bool = True
-    write_cue: bool = True
+    write_m3u: bool = False              # playlist (.m3u8) in the album folder
+    write_cue: bool = False              # cue sheet (.cue) in the album folder
+    settings_version: int = 2
     log_in_album_folder: bool = False    # rip log always goes to %APPDATA%\\CDRipperStudio\\logs; copy optional
     secure_mode: bool = True
     read_offset: int = 0                 # samples; see accuraterip.com/driveoffsets.htm
@@ -60,6 +61,9 @@ class Settings:
             with open(p, encoding="utf-8") as f:
                 d = json.load(f)
             names = {f.name for f in fields(cls)}
+            if d.get("settings_version", 1) < 2:     # v2: playlist / cue sheet are off by default
+                d["write_m3u"] = d["write_cue"] = False
+                d["settings_version"] = 2
             # old defaults already contained the album folder; the album-folder option does that now
             if d.get("template") == "{albumartist}/[{year} - ]{album}/{track:02}. {title}":
                 d["template"] = cls.template
