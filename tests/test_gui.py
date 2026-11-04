@@ -62,3 +62,49 @@ def test_outdir_and_template_saved_as_default(win):
     w2 = MainWindow()                                   # new launch picks them up
     assert w2.outdir.text() == saved["output_dir"] and w2.tpl.currentText() == saved["template"]
     w2.close()
+
+
+def test_info_entered_before_cd_is_kept(tmp_path, monkeypatch):
+    """Webcam/typing first, CD second: nothing is lost, web lookup only fills blanks."""
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("CDRIPPER_FAKE", "1")
+    from cdripper.core.metadata import AlbumMeta, TrackMeta
+    from cdripper.gui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "lookup_disc", lambda self, manual=False: None)
+    monkeypatch.setattr(mw.MainWindow, "load_disc", lambda self: None)   # start with "no CD"
+    w = mw.MainWindow()
+    assert w.toc is None and not w.album.tracks
+    # 1) "webcam" result before inserting: track count comes from the text
+    from PySide6.QtGui import QGuiApplication
+    QGuiApplication.clipboard().setText("1. 이 지금\n2. 팔레트\n3. 이런 엔딩\n4. Black Out")
+    w.paste_titles()
+    assert [t.title for t in w.album.tracks] == ["이 지금", "팔레트", "이런 엔딩", "Black Out"]
+    w.album_edits["album"].setText("Palette"); w._album_edited("album", "Palette")
+    # 2) insert the CD (it has CD-Text "Test Album" / "First Song")
+    d = w.drives[0]
+    w._disc_loaded((d.read_toc(), d.read_cdtext()))
+    assert w.album.album == "Palette"
+    assert [t.title for t in w.album.tracks] == ["이 지금", "팔레트", "이런 엔딩", "Black Out"]
+    assert all(t.length for t in w.album.tracks)                 # lengths from the CD
+    assert w.album.albumartist == "Test Artist"                  # blank filled from CD-Text
+    # 3) web lookup result only fills blanks
+    web = AlbumMeta(albumartist="IU", album="Web Album", date="2017", genre="K-Pop",
+                    tracks=[TrackMeta(i + 1, title=f"web {i + 1}", composer="IU") for i in range(4)])
+    w._lookup_done([web])
+    assert w.album.album == "Palette" and w.album.date == "2017"
+    assert w.album.tracks[0].title == "이 지금" and w.album.tracks[0].composer == "IU"
+    # 4) eject → sheet cleared for the next CD, but this disc's info is remembered
+    w.eject()
+    assert w.toc is None and not w.album.tracks and not w.album.album
+    w._disc_loaded((d.read_toc(), {}))
+    assert w.album.album == "Palette" and w.album.tracks[1].title == "팔레트"
+    w.close()
+
+
+def test_ocr_dialog_without_cd_counts_tracks():
+    from cdripper.gui.ocr_dialog import OcrDialog
+    dlg = OcrDialog(None, 0)
+    dlg.text.setPlainText("01. A 3:00\n02. B\n03. C\n04. D\n05. E")
+    assert dlg.table.rowCount() == 5
+    dlg._accept()
+    assert dlg.n_tracks == 5 and dlg.result[5]["title"] == "E"

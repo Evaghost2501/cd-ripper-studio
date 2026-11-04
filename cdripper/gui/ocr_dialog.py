@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QTableWidgetItem, QVBoxLayout, QWidget, QHeaderView, QMessageBox)
 
 from ..core import ocr
-from .util import run_async
+from .util import fit_to_screen, run_async
 
 
 class ImageView(QLabel):
@@ -94,7 +94,8 @@ class OcrDialog(QDialog):
     def __init__(self, parent, n_tracks: int, camera_index: int = 0, engine: str = "auto", lang: str = "ko"):
         super().__init__(parent)
         self.setWindowTitle("웹캠으로 트랙 목록 인식")
-        self.resize(1250, 760)
+        fit_to_screen(self, 1250, 760)
+        self.fixed_count = n_tracks > 0            # 0 = no CD yet: count comes from the text
         self.n_tracks, self.engine, self.lang = n_tracks, engine, lang
         self.cap = None
         self.result: dict[int, dict] = {}
@@ -269,7 +270,11 @@ class OcrDialog(QDialog):
         run_async(ocr.recognize, img, self.engine, self.lang, on_done=done, on_fail=fail)
 
     def reparse(self):
-        mapping = ocr.assign_titles(ocr.parse_tracklist(self.text.toPlainText()), self.n_tracks)
+        parsed = ocr.parse_tracklist(self.text.toPlainText())
+        if not self.fixed_count:
+            self.n_tracks = ocr.guess_track_count(parsed)
+            self.table.setRowCount(self.n_tracks)
+        mapping = ocr.assign_titles(parsed, self.n_tracks)
         split = self.split_artist.isChecked()
         self.table.blockSignals(True)
         for r in range(self.n_tracks):

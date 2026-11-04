@@ -6,13 +6,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 
 from ..core import ocr
 from ..core.settings import Settings
+from .util import fit_to_screen
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent, s: Settings):
         super().__init__(parent)
         self.setWindowTitle("설정")
-        self.resize(560, 480)
+        fit_to_screen(self, 560, 480)
         self.s = s
         tabs = QTabWidget()
 
@@ -46,9 +47,12 @@ class SettingsDialog(QDialog):
         self.log = QCheckBox("추출 로그(.log) 생성"); self.log.setChecked(s.write_log)
         self.flac = QCheckBox("보관용 FLAC 사본도 함께 만들기 (_FLAC 폴더)"); self.flac.setChecked(s.extra_flac)
         self.vtpl = QLineEdit(s.various_template)
+        self.font_pt = QSpinBox(); self.font_pt.setRange(7, 32); self.font_pt.setValue(s.font_pt)
+        self.font_pt.setSuffix(" pt  (원래 9pt, 재시작 후 적용)")
         f.addRow("MP3 태그 버전", self.id3); f.addRow(self.embed); f.addRow("내장 커버 최대 크기", self.cmax)
         f.addRow(self.folderjpg); f.addRow(self.m3u); f.addRow(self.cue); f.addRow(self.log); f.addRow(self.flac)
         f.addRow("컴필레이션 앨범 파일명", self.vtpl)
+        f.addRow("글자 크기", self.font_pt)
         tabs.addTab(w, "태그 / 파일")
 
         # metadata / OCR
@@ -95,5 +99,9 @@ class SettingsDialog(QDialog):
         s.auto_lookup, s.store_country = self.auto.isChecked(), self.country.currentText()
         s.ocr_engine, s.ocr_lang = self.engine.currentData(), self.lang.currentData()
         s.ffmpeg_path = self.ffmpeg.text().strip()
+        if self.font_pt.value() != s.font_pt:
+            s.font_pt = self.font_pt.value()
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "글자 크기", "프로그램을 다시 시작하면 새 글자 크기가 적용됩니다.")
         s.save()
         self.accept()

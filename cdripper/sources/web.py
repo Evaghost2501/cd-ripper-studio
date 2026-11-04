@@ -1,10 +1,12 @@
 """Online metadata & cover-art sources: MusicBrainz (+Cover Art Archive), iTunes, Deezer."""
 from __future__ import annotations
 
+import json
+import re
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import requests
 
@@ -29,6 +31,16 @@ def _get(url, params=None, timeout=15, mb=False):
     r = session.get(url, params=params, timeout=timeout)
     r.raise_for_status()
     return r.json()
+
+
+def _short(e: Exception) -> str:
+    if isinstance(e, requests.Timeout):
+        return "시간 초과"
+    if isinstance(e, requests.ConnectionError):
+        return "연결 실패"
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"HTTP {e.response.status_code}"
+    return str(e)[:120]
 
 
 def _artist_credit(ac) -> str:
@@ -222,7 +234,7 @@ def search_all(artist: str, album: str, sources=("MusicBrainz", "iTunes", "Deeze
         except Exception as e:  # noqa: BLE001
             buckets[name] = []
             if errors is not None:
-                errors.append(f"{name}: {e}")
+                errors.append(f"{name}: {_short(e)}")
 
     for s in sources:
         th = threading.Thread(target=run, args=(s,))
@@ -256,7 +268,7 @@ def cover_search(artist: str, album: str, mbid: str = "", country: str = "KR",
             fn()
         except Exception as e:  # noqa: BLE001
             if errors is not None:
-                errors.append(str(e))
+                errors.append(_short(e))
 
     def itunes():
         for r in _get("https://itunes.apple.com/search",
@@ -296,10 +308,52 @@ def cover_search(artist: str, album: str, mbid: str = "", country: str = "KR",
     return out
 
 
-def google_images_url(artist: str, album: str) -> str:
+def google_images_url(query: str) -> str:
     """Google Images search with exactly what the user typed (nothing appended)."""
-    query = " ".join(x.strip() for x in (artist, album) if x.strip())
-    return "https://www.google.com/search?tbm=isch&tbs=isz:l&q=" + quote_plus(query)
+    return "https://www.google.com/search?tbm=isch&q=" + quote_plus(query.strip())
+
+
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+_IMG_ENTRY = re.compile(r'\["(https?:[^"]+?)",(\d+),(\d+)\]')
+
+
+def parse_google_images(html: str, limit: int = 40) -> list[CoverCandidate]:
+    """Extract (thumbnail, original, size) from a Google Images result page.
+
+    Google embeds each result as ["<gstatic thumbnail>",h,w] followed by
+    ["<original url>",h,w] inside its page scripts."""
+    out, seen, thumb = [], set(), None
+    for m in _IMG_ENTRY.finditer(html):
+        try:
+            url = json.loads(f'"{m.group(1)}"')          # decodes \u003d etc.
+        except ValueError:
+            continue
+        h, w = int(m.group(2)), int(m.group(3))
+        if "gstatic.com/images" in url or "encrypted-tbn" in url:
+            thumb = url
+            continue
+        if url in seen or w < 100 or h < 100:
+            continue
+        seen.add(url)
+        host = urlparse(url).netloc.removeprefix("www.")
+        out.append(CoverCandidate("Google", thumb or url, url, host, w, h))
+        thumb = None
+        if len(out) >= limit:
+            break
+    return out
+
+
+def google_image_search(query: str, limit: int = 40) -> list[CoverCandidate]:
+    r = session.get("https://www.google.com/search",
+                    params={"q": query, "tbm": "isch", "hl": "ko"},
+                    headers={"User-Agent": _BROWSER_UA, "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"},
+                    timeout=15)
+    r.raise_for_status()
+    res = parse_google_images(r.text, limit)
+    if not res:
+        raise RuntimeError("Google 결과를 읽지 못했습니다 (페이지 형식 변경 또는 차단)")
+    return res
 
 
 def download(url: str, timeout: int = 20) -> bytes:

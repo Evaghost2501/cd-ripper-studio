@@ -41,8 +41,11 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("CD Ripper Studio")
     app.setStyle("Fusion")
-    if sys.platform == "win32":
-        app.setFont(QFont("Malgun Gothic", 9))
+    from .core.settings import Settings
+    pt = max(7, min(32, Settings.load().font_pt))
+    font = QFont("Malgun Gothic") if sys.platform == "win32" else app.font()
+    font.setPointSize(pt)
+    app.setFont(font)
     icon = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__))), "assets", "icon.ico")
     if os.path.exists(icon):
         app.setWindowIcon(QIcon(icon))

@@ -10,7 +10,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequen
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
+                               QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
                                QWidget)
 
 from .. import __version__
@@ -25,7 +25,7 @@ from .cover_dialog import CoverDialog
 from .ocr_dialog import OcrDialog
 from .search_dialog import SearchDialog
 from .settings_dialog import SettingsDialog
-from .util import image_size, pixmap_from_bytes, run_async
+from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async
 
 COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
         ("lyricist", "작사"), ("genre", "장르"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
@@ -56,7 +56,7 @@ class TrackDetailDialog(QDialog):
     def __init__(self, parent, t: TrackMeta):
         super().__init__(parent)
         self.setWindowTitle(f"트랙 {t.number:02d} 상세 정보")
-        self.resize(520, 520)
+        fit_to_screen(self, 520, 520)
         self.t = t
         f = QFormLayout(self)
         self.edits = {}
@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"CD Ripper Studio {__version__}")
-        self.resize(1360, 820)
+        fit_to_screen(self, 1360, 820)
         self.s = Settings.load()
         self.drives: list[BaseDrive] = []
         self.toc: Toc | None = None
@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.cover: bytes | None = None
         self.rip_thread: RipThread | None = None
         self._media = None
+        self._fill_empty_only = False
         self._build_ui()
         self.refresh_drives()
         self.poll = QTimer(self, interval=2000, timeout=self._poll_media)
@@ -102,7 +103,7 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
         tb.addWidget(QLabel(" 드라이브 "))
-        self.drive_combo = QComboBox(minimumWidth=200)
+        self.drive_combo = QComboBox(minimumWidth=px(200))
         self.drive_combo.currentIndexChanged.connect(lambda *_: self.load_disc())
         tb.addWidget(self.drive_combo)
 
@@ -115,12 +116,12 @@ class MainWindow(QMainWindow):
             tb.addAction(a)
             return a
 
-        act("⟳ 새로고침", self.load_disc, "디스크 다시 읽기", "F5")
+        act("⟳ 새로고침", self.load_disc, "디스크 다시 읽기 (F5)", "F5")
         act("⏏ 꺼내기", self.eject)
         tb.addSeparator()
-        act("🌐 웹에서 정보 찾기", self.search_metadata, "MusicBrainz · iTunes · Deezer 검색", "Ctrl+F")
-        act("🖼 커버 찾기", self.find_cover, "", "Ctrl+I")
-        act("📷 웹캠으로 트랙 인식", self.ocr_tracks, "CD 뒷면을 찍어 트랙 제목 인식", "Ctrl+K")
+        act("🌐 정보 검색", self.search_metadata, "웹에서 앨범 정보 찾기: MusicBrainz · iTunes · Deezer (Ctrl+F)", "Ctrl+F")
+        act("🖼 커버", self.find_cover, "Google 이미지에서 커버 찾기 (Ctrl+I)", "Ctrl+I")
+        act("📷 웹캠 인식", self.ocr_tracks, "CD 뒷면을 웹캠으로 찍어 트랙 제목 인식 (Ctrl+K)", "Ctrl+K")
         tb.addSeparator()
         act("⚙ 설정", self.open_settings)
 
@@ -154,25 +155,38 @@ class MainWindow(QMainWindow):
         root.addWidget(split, 1)
 
         # ---- album panel ----------------------------------------------
+        # scrollable so the album panel can never push the bottom controls off-screen
         left = QWidget()
-        left.setMaximumWidth(380)
         ll = QVBoxLayout(left)
-        self.cover_lbl = QLabel("커버 없음\n\n이미지를 끌어다 놓거나\n'커버 찾기'를 누르세요", alignment=Qt.AlignCenter)
-        self.cover_lbl.setFixedSize(340, 340)
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setFrameShape(QScrollArea.NoFrame)
+        left_scroll.setMinimumWidth(px(260))
+        left_scroll.setMaximumWidth(px(400))
+        self.cover_lbl = QLabel("커버 없음\n끌어다 놓기", alignment=Qt.AlignCenter)
+        self.cover_lbl.setFixedSize(170, 170)
         self.cover_lbl.setStyleSheet("border:1px dashed #999; color:#888;")
         self.cover_lbl.setAcceptDrops(True)
         self.setAcceptDrops(True)
-        ll.addWidget(self.cover_lbl, alignment=Qt.AlignHCenter)
+        # cover on the left, its buttons stacked on the right (saves vertical space)
+        cover_row = QHBoxLayout()
+        cover_col = QVBoxLayout()
+        cover_col.addWidget(self.cover_lbl)
         self.cover_info = QLabel(alignment=Qt.AlignCenter)
         self.cover_info.setStyleSheet("color:#777")
-        ll.addWidget(self.cover_info)
-        cr = QHBoxLayout()
-        for text, fn in (("찾기", self.find_cover), ("파일", self.cover_from_file),
-                         ("붙여넣기", self.cover_from_clipboard), ("삭제", lambda: self.set_cover(None))):
+        cover_col.addWidget(self.cover_info)
+        cover_row.addLayout(cover_col)
+        cr = QVBoxLayout()
+        for text, fn in (("🔍 찾기", self.find_cover), ("📂 파일", self.cover_from_file),
+                         ("📋 붙여넣기", self.cover_from_clipboard), ("✖ 삭제", lambda: self.set_cover(None))):
             b = QPushButton(text)
             b.clicked.connect(fn)
             cr.addWidget(b)
-        ll.addLayout(cr)
+        cr.addStretch()
+        cover_row.addLayout(cr, 1)
+        ll.addLayout(cover_row)
 
         g = QGroupBox("앨범 정보")
         form = QFormLayout(g)
@@ -199,7 +213,7 @@ class MainWindow(QMainWindow):
         form.addRow(self.disc_info)
         ll.addWidget(g)
         ll.addStretch()
-        split.addWidget(left)
+        split.addWidget(left_scroll)
 
         # ---- track table ------------------------------------------------
         right = QWidget()
@@ -212,10 +226,19 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed |
                                    QAbstractItemView.AnyKeyPressed)
         hh = self.table.horizontalHeader()
+        # title and artist share the free space; the rest stay compact
         hh.setSectionResizeMode(COL["title"], QHeaderView.Stretch)
-        for k, w in (("rip", 30), ("number", 36), ("artist", 150), ("composer", 95), ("lyricist", 85),
-                     ("genre", 70), ("isrc", 100), ("length", 50), ("status", 150)):
-            self.table.setColumnWidth(COL[k], w)
+        hh.setSectionResizeMode(COL["artist"], QHeaderView.Stretch)
+        for k, w in (("rip", 30), ("number", 34), ("artist", 130), ("composer", 80), ("lyricist", 70),
+                     ("genre", 60), ("isrc", 95), ("length", 46), ("status", 110)):
+            self.table.setColumnWidth(COL[k], px(w))
+        hh.setMinimumSectionSize(px(28))
+        # less-used columns hidden by default; right-click the header to show/hide (choice is remembered)
+        for k in self.s.hidden_columns:
+            if k in COL:
+                self.table.setColumnHidden(COL[k], True)
+        hh.setContextMenuPolicy(Qt.CustomContextMenu)
+        hh.customContextMenuRequested.connect(self._header_menu)
         self.table.itemChanged.connect(self._track_edited)
         self.table.cellDoubleClicked.connect(self._cell_dbl)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -235,13 +258,16 @@ class MainWindow(QMainWindow):
         self.restore_btn.setEnabled(False)
         sel.addWidget(self.restore_btn)
         QShortcut(QKeySequence.Delete, self.table, self.delete_tracks, context=Qt.WidgetShortcut)
-        hint = QLabel("더블클릭: 수정 · '#' 더블클릭: 가사/코멘트 · 우클릭: 일괄 편집")
+        hint = QLabel("더블클릭: 수정 · '#' 더블클릭: 가사/코멘트 · 우클릭: 일괄 편집 · 제목줄 우클릭: 열 표시")
         hint.setStyleSheet("color:#777")
-        sel.addWidget(hint)
-        sel.addStretch()
+        hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        sel.addWidget(hint, 1)
         rl.addLayout(sel)
         split.addWidget(right)
-        split.setSizes([380, 980])
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes([px(300), px(1000)])
+        right.setMinimumHeight(px(110))
 
         # ---- output panel ------------------------------------------------
         og = QGroupBox("출력")
@@ -253,6 +279,7 @@ class MainWindow(QMainWindow):
         self.quality = QComboBox()
         self.fmt_note = QLabel()
         self.fmt_note.setStyleSheet("color:#777")
+        self.fmt_note.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.fmt.currentIndexChanged.connect(self._fmt_changed)
         self.quality.currentIndexChanged.connect(self._quality_changed)
         r1.addWidget(self.fmt); r1.addWidget(self.quality); r1.addWidget(self.fmt_note, 1)
@@ -283,6 +310,7 @@ class MainWindow(QMainWindow):
         self.preview = QLabel()
         self.preview.setStyleSheet("color:#1565c0")
         self.preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # long paths never widen the window
         ol.addRow("미리보기", self.preview)
         root.addWidget(og)
 
@@ -290,17 +318,21 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setFormat("%p%")
         self.status = QLabel("준비")
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.rip_btn = QPushButton("●  리핑 시작")
-        self.rip_btn.setMinimumHeight(40)
-        self.rip_btn.setMinimumWidth(170)
-        self.rip_btn.setStyleSheet("font-weight:bold; font-size:14px;")
+        f = self.rip_btn.font()
+        f.setBold(True)
+        f.setPointSizeF(f.pointSizeF() * 1.15)
+        self.rip_btn.setFont(f)
+        self.rip_btn.setMinimumHeight(px(32))
+        self.rip_btn.setMinimumWidth(px(170))
         self.rip_btn.clicked.connect(self.start_or_cancel)
         bottom.addWidget(self.status, 2)
         bottom.addWidget(self.progress, 3)
         bottom.addWidget(self.rip_btn)
         root.addLayout(bottom)
         self.logbox = QPlainTextEdit(readOnly=True, maximumBlockCount=2000)
-        self.logbox.setMaximumHeight(110)
+        self.logbox.setFixedHeight(self.logbox.fontMetrics().lineSpacing() * 3 + 14)   # always 3 lines
         root.addWidget(self.logbox)
 
         idx = self.fmt.findData(self.s.format)
@@ -338,8 +370,7 @@ class MainWindow(QMainWindow):
                 QTimer.singleShot(1500, self.load_disc)
             else:
                 self.log("디스크가 제거되었습니다.")
-                self.toc = None
-                self.disc_info.setText("디스크 없음")
+                self._disc_removed()
         self._media = present
 
     def eject(self):
@@ -349,6 +380,28 @@ class MainWindow(QMainWindow):
                 d.eject()
             except DriveError as e:
                 self.log(str(e))
+                return
+            self._disc_removed()
+
+    def _disc_removed(self):
+        """Remember what was entered for this disc, then start with an empty sheet so anything typed /
+        recognised before the next CD goes in is kept for that CD."""
+        if self.toc is None:
+            return
+        self._cache_save()
+        self.toc = None
+        self.toc_was_empty = True
+        self.album = AlbumMeta()
+        self.set_cover(None)
+        self.refresh_all()
+        self.disc_info.setText("디스크 없음 — CD를 넣기 전에 웹캠 인식·직접 입력을 해 두면 CD를 넣을 때 그대로 적용됩니다.")
+        self.status.setText("디스크 없음")
+
+    def _has_user_data(self) -> bool:
+        a = self.album
+        if self.cover or any(getattr(a, k) for k, _ in ALBUM_FIELDS if k not in ("disc", "totaldiscs")):
+            return True
+        return any(t.title or t.artist or t.composer for t in a.tracks)
 
     def load_disc(self):
         d = self.drive()
@@ -363,6 +416,14 @@ class MainWindow(QMainWindow):
 
         run_async(read, on_done=self._disc_loaded, on_fail=self._disc_failed)
 
+    @property
+    def toc_was_empty(self) -> bool:
+        return getattr(self, "_toc_was_empty", True)
+
+    @toc_was_empty.setter
+    def toc_was_empty(self, v):
+        self._toc_was_empty = v
+
     def _disc_failed(self, e):
         self.status.setText("디스크 없음")
         self.disc_info.setText("오디오 CD를 넣어주세요.")
@@ -376,6 +437,9 @@ class MainWindow(QMainWindow):
         self.disc_info.setText(f"{len(audio)}트랙 · {fmt_duration(toc.audio_leadout)}\n"
                                f"MusicBrainz Disc ID: {discid}")
         self.status.setText(f"오디오 CD: {len(audio)}트랙")
+        # info entered before the CD was inserted (webcam / typing / paste) is kept
+        pending = (self.album, self.cover) if self.toc_was_empty and self._has_user_data() else None
+        self.toc_was_empty = False
         self.album = AlbumMeta(mb_discid=discid,
                                tracks=[TrackMeta(t.number, length=t.length) for t in audio])
         self.set_cover(None)
@@ -388,6 +452,16 @@ class MainWindow(QMainWindow):
         elif cdtext:
             self.log("CD-Text 정보를 찾았습니다.")
             self._apply_cdtext(cdtext)
+        if pending:
+            p_album, p_cover = pending
+            if len(p_album.tracks) not in (0, len(audio)):
+                self.log(f"⚠ 미리 입력한 트랙 수({len(p_album.tracks)})와 CD 트랙 수({len(audio)})가 다릅니다. "
+                         "번호대로 적용했습니다.")
+            self.apply_album(p_album, keep_ids=True)
+            if p_cover:
+                self.set_cover(p_cover)
+            self.log("CD를 넣기 전에 입력한 정보를 이 CD에 적용했습니다. 웹 검색 결과는 빈 칸만 채웁니다.")
+        self._fill_empty_only = bool(pending)
         self.refresh_all()
         if self.s.auto_lookup and not cached:
             self.lookup_disc()
@@ -413,13 +487,13 @@ class MainWindow(QMainWindow):
         if len(exact) == 1 or (len(results) == 1):
             a = (exact or results)[0]
             self.log(f"MusicBrainz에서 찾음: {a.albumartist} – {a.album}")
-            self.apply_album(a)
+            self.apply_album(a, fill_empty=self._fill_empty_only)
             self.status.setText("웹에서 앨범 정보를 찾았습니다. 확인 후 리핑하세요.")
         elif results:
             self.status.setText(f"{len(results)}개 후보 — 선택하세요")
             dlg = SearchDialog(self, "", "", self.toc, self.s.store_country, preset=results)
             if dlg.exec() and dlg.selected:
-                self.apply_album(dlg.selected)
+                self.apply_album(dlg.selected, fill_empty=self._fill_empty_only)
         else:
             self.status.setText("웹에서 이 디스크를 찾지 못했습니다")
             self.log("디스크 ID로 찾지 못했습니다. '웹에서 정보 찾기'로 앨범명 검색, 웹캠 인식, 또는 직접 입력하세요.")
@@ -427,14 +501,28 @@ class MainWindow(QMainWindow):
                 self._open_search()
 
     # ================================================================ metadata
-    def apply_album(self, a: AlbumMeta, replace: bool = False):
+    def apply_album(self, a: AlbumMeta, replace: bool = False, fill_empty: bool = False,
+                    keep_ids: bool = False):
+        """replace: overwrite everything · fill_empty: only fill blank fields (keeps what the user entered)
+        · default: non-empty values from `a` win."""
         cur = self.album
+
+        def take(old, new):
+            if fill_empty:
+                return bool(new) and not old
+            return bool(new) or replace
+
         for key, _ in ALBUM_FIELDS:
             val = getattr(a, key)
-            if val or replace:
+            if take(getattr(cur, key), val) and not (fill_empty and key in ("disc", "totaldiscs")):
                 setattr(cur, key, val)
-        for k in ("compilation", "mb_release_id", "mb_releasegroup_id", "source"):
-            setattr(cur, k, getattr(a, k))
+        if not keep_ids:
+            for k in ("mb_release_id", "mb_releasegroup_id", "source"):
+                setattr(cur, k, getattr(a, k))
+        if keep_ids or fill_empty:       # merging: a "yes" from either side wins
+            cur.compilation = cur.compilation or a.compilation
+        else:
+            cur.compilation = a.compilation
         by_no = {t.number: t for t in a.tracks}
         if len(a.tracks) != len(cur.tracks) and cur.tracks and a.tracks:
             self.log(f"⚠ 트랙 수가 다릅니다 (CD {len(cur.tracks)} / 검색 결과 {len(a.tracks)}). 번호 순서대로 적용했습니다.")
@@ -445,7 +533,7 @@ class MainWindow(QMainWindow):
             for f in ("title", "artist", "composer", "lyricist", "genre", "isrc", "comment", "lyrics",
                       "mb_recording_id"):
                 v = getattr(src, f)
-                if v or replace:
+                if take(getattr(t, f), v):
                     setattr(t, f, v)
             if not t.length:
                 t.length = src.length
@@ -491,15 +579,12 @@ class MainWindow(QMainWindow):
             self.apply_album(dlg.selected, replace=replace)
 
     def ocr_tracks(self):
-        n = len(self.album.tracks)
-        if not n:
-            n, ok = QInputDialog.getInt(self, "트랙 수", "CD가 없습니다. 트랙 수를 입력하세요:", 10, 1, 99)
-            if not ok:
-                return
-            self.album.tracks = [TrackMeta(i + 1) for i in range(n)]
+        n = len(self.album.tracks)      # 0 = no CD yet → track count follows the recognised list
         dlg = OcrDialog(self, n, self.s.camera_index, self.s.ocr_engine, self.s.ocr_lang)
         if dlg.exec():
             self.s.camera_index = dlg.cam_combo.currentData()
+            if not self.album.tracks:
+                self._ensure_tracks(dlg.n_tracks)
             for t in self.album.tracks:
                 d = dlg.result.get(t.number)
                 if d:
@@ -509,22 +594,34 @@ class MainWindow(QMainWindow):
             self.refresh_tracks()
             self.log(f"웹캠 인식 결과 {len(dlg.result)}개 트랙에 적용했습니다.")
 
+    def _ensure_tracks(self, n: int):
+        """No CD inserted yet: create placeholder tracks (merged by number when the CD goes in)."""
+        self.album.tracks = [TrackMeta(i + 1) for i in range(n)]
+        if self.auto_fill.isChecked():
+            for t in self.album.tracks:
+                t.artist, t.genre, t.comment = self.album.albumartist, self.album.genre, self.album.comment
+        self.refresh_tracks()
+
     # ================================================================ cover
     def set_cover(self, data: bytes | None):
         self.cover = data
         if data:
-            self.cover_lbl.setPixmap(pixmap_from_bytes(data, 338))
+            self.cover_lbl.setPixmap(pixmap_from_bytes(data, 168))
             w, h = image_size(data)
             self.cover_info.setText(f"{w}×{h}  ·  {len(data) // 1024} KB")
         else:
             self.cover_lbl.setPixmap(pixmap_from_bytes(None))
-            self.cover_lbl.setText("커버 없음\n\n이미지를 끌어다 놓거나\n'커버 찾기'를 누르세요")
+            self.cover_lbl.setText("커버 없음\n끌어다 놓기")
             self.cover_info.setText("")
 
     def find_cover(self):
         dlg = CoverDialog(self, self.album.albumartist, self.album.album, self.album.mb_release_id,
-                          self.s.store_country)
-        if dlg.exec() and dlg.result:
+                          self.s.store_country, self.s.cover_music_sources)
+        ok = dlg.exec()
+        if dlg.music.isChecked() != self.s.cover_music_sources:
+            self.s.cover_music_sources = dlg.music.isChecked()
+            self._save_soon()
+        if ok and dlg.result:
             self.set_cover(dlg.result)
 
     def cover_from_file(self):
@@ -704,6 +801,23 @@ class MainWindow(QMainWindow):
         if missing:
             self.log(f"트랙 {', '.join(f'{n:02d}' for n in missing)} 복원")
 
+    def _header_menu(self, pos):
+        m = QMenu(self)
+        m.addSection("표시할 열")
+        for key, label in COLS:
+            if key in ("rip", "number", "title"):
+                continue
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(not self.table.isColumnHidden(COL[key]))
+            a.toggled.connect(lambda on, k=key: self._toggle_column(k, on))
+        m.exec(self.table.horizontalHeader().mapToGlobal(pos))
+
+    def _toggle_column(self, key, show):
+        self.table.setColumnHidden(COL[key], not show)
+        self.s.hidden_columns = [k for k, _ in COLS if self.table.isColumnHidden(COL[k])]
+        self._save_soon()
+
     def _rip_only_selected(self):
         rows = set(self.selected_rows())
         for i, t in enumerate(self.album.tracks):
@@ -717,6 +831,8 @@ class MainWindow(QMainWindow):
             return QMessageBox.information(self, "붙여넣기", "클립보드에 텍스트가 없습니다.\n"
                                                              "웹페이지(멜론, 벅스 등)의 트랙 목록을 복사한 뒤 사용하세요.")
         parsed = ocr.parse_tracklist(text)
+        if not self.album.tracks:
+            self._ensure_tracks(ocr.guess_track_count(parsed))
         n = len(self.album.tracks)
         numbered = {k: v for k, v in parsed if k is not None and 1 <= k <= n}
         count = 0

@@ -1,14 +1,14 @@
-"""Cover-art finder: iTunes (up to 3000px), Deezer (1000px), Cover Art Archive,
-plus Google Images in the browser → drag & drop / paste URL / clipboard."""
+"""Cover/image finder: Google Images (in-app results, exact query), optional music stores,
+plus drag & drop / paste URL / clipboard."""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon, QImage, QKeySequence
-from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QListView)
 
 from ..sources import web
-from .util import image_size, pixmap_from_bytes, run_async
+from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async
 
 
 def image_bytes_from_qimage(img: QImage) -> bytes:
@@ -21,32 +21,43 @@ def image_bytes_from_qimage(img: QImage) -> bytes:
 
 
 class CoverDialog(QDialog):
-    def __init__(self, parent, artist: str, album: str, mbid: str = "", country: str = "KR"):
+    """Searches Google Images with exactly the typed query and shows the results in-app.
+    Music stores (iTunes/Deezer/Cover Art Archive) are optional."""
+
+    def __init__(self, parent, artist: str, album: str, mbid: str = "", country: str = "KR",
+                 music_sources: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("앨범 커버 찾기")
-        self.resize(980, 680)
+        self.setWindowTitle("커버 이미지 찾기 (Google)")
+        fit_to_screen(self, 1000, 700)
         self.setAcceptDrops(True)
         self.country, self.mbid = country, mbid
         self.result: bytes | None = None
         self.cands: list[web.CoverCandidate] = []
+        self._gen = 0
 
         lay = QVBoxLayout(self)
         row = QHBoxLayout()
-        self.query_artist = QLineEdit(artist, placeholderText="아티스트")
-        self.query_album = QLineEdit(album, placeholderText="앨범")
-        b_search = QPushButton("검색")
+        self.query = QLineEdit(" ".join(x for x in (artist.strip(), album.strip()) if x),
+                               placeholderText="검색어 (입력한 그대로 Google 이미지에서 검색)")
+        self.query.setClearButtonEnabled(True)
+        b_search = QPushButton("🔍 검색")
         b_search.setDefault(True)
-        b_google = QPushButton("Google 이미지에서 찾기 ↗")
-        b_google.setToolTip("브라우저에서 Google 이미지 검색을 엽니다.\n"
-                            "마음에 드는 이미지를 이 창으로 드래그하거나, 이미지 주소를 복사해 'URL 붙여넣기'를 누르세요.")
-        row.addWidget(self.query_artist, 2); row.addWidget(self.query_album, 3)
-        row.addWidget(b_search); row.addWidget(b_google)
+        b_browser = QPushButton("브라우저로 열기 ↗")
+        b_browser.setToolTip("같은 검색어로 브라우저에서 Google 이미지를 엽니다.\n"
+                             "이미지를 이 창으로 드래그하거나, 이미지 주소를 복사해 'URL 붙여넣기'를 누르세요.")
+        row.addWidget(self.query, 1)
+        row.addWidget(b_search)
+        row.addWidget(b_browser)
         lay.addLayout(row)
+        self.music = QCheckBox("음악 서비스(iTunes·Deezer·Cover Art Archive)도 함께 검색")
+        self.music.setChecked(music_sources)
+        lay.addWidget(self.music)
 
+        icon = px(160)
         self.list = QListWidget()
         self.list.setViewMode(QListView.IconMode)
-        self.list.setIconSize(QSize(200, 200))
-        self.list.setGridSize(QSize(225, 260))
+        self.list.setIconSize(QSize(icon, icon))
+        self.list.setGridSize(QSize(icon + px(30), icon + px(70)))
         self.list.setResizeMode(QListView.Adjust)
         self.list.setMovement(QListView.Static)
         self.list.setWordWrap(True)
@@ -54,8 +65,10 @@ class CoverDialog(QDialog):
 
         hint = QLabel("💡 이미지 파일·브라우저 이미지를 이 창에 끌어다 놓아도 됩니다. Ctrl+V로 클립보드 이미지 붙여넣기.")
         hint.setStyleSheet("color:#777")
+        hint.setWordWrap(True)
         lay.addWidget(hint)
         self.status = QLabel()
+        self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
         bottom = QHBoxLayout()
@@ -66,41 +79,74 @@ class CoverDialog(QDialog):
             bottom.addWidget(b)
         bottom.addStretch()
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.button(QDialogButtonBox.Ok).setText("선택한 커버 사용")
+        bb.button(QDialogButtonBox.Ok).setText("선택한 이미지 사용")
         bb.accepted.connect(self.use_selected)
         bb.rejected.connect(self.reject)
         bottom.addWidget(bb)
         lay.addLayout(bottom)
 
         b_search.clicked.connect(self.search)
-        self.query_album.returnPressed.connect(self.search)
-        b_google.clicked.connect(lambda: QDesktopServices.openUrl(
-            QUrl(web.google_images_url(self.query_artist.text(), self.query_album.text()))))
+        self.query.returnPressed.connect(self.search)
+        b_browser.clicked.connect(self.open_browser)
         self.list.itemDoubleClicked.connect(lambda *_: self.use_selected())
-        if artist or album:
+        if self.query.text():
             self.search()
+        else:
+            self.status.setText("검색어를 입력하세요.")
+
+    def open_browser(self):
+        q = self.query.text().strip()
+        if q:
+            QDesktopServices.openUrl(QUrl(web.google_images_url(q)))
 
     # ------------------------------------------------------------------
     def search(self):
+        q = self.query.text().strip()
+        if not q:
+            return
+        self._gen += 1
+        gen = self._gen
         self.list.clear()
         self.cands = []
-        self.status.setText("검색 중…")
+        self.status.setText(f"Google 이미지에서 “{q}” 검색 중…")
         errs: list = []
-        run_async(web.cover_search, self.query_artist.text().strip(), self.query_album.text().strip(),
-                  self.mbid, self.country, errs, on_done=lambda c: self._show(c, errs),
+        music = self.music.isChecked()
+
+        def work():
+            found = []
+            try:
+                found += web.google_image_search(q)
+            except Exception as e:  # noqa: BLE001
+                errs.append(f"Google: {web._short(e)}")
+            if music:
+                found += web.cover_search("", q, self.mbid, self.country, errs)
+            return found
+
+        run_async(work, on_done=lambda c: gen == self._gen and self._show(c, errs),
                   on_fail=lambda e: self.status.setText("실패: " + e))
 
     def _show(self, cands, errs):
         self.cands = cands
-        self.status.setText(f"{len(cands)}개 후보" + (f"  (일부 실패: {'; '.join(errs)[:150]})" if errs else "")
-                            if cands else "후보가 없습니다. Google 이미지 검색을 이용해 보세요.")
+        google_failed = any(e.startswith("Google") for e in errs)
+        if cands:
+            self.status.setText(f"{len(cands)}개 이미지 — 더블클릭하면 원본 크기로 가져옵니다."
+                                + (f"  ({'; '.join(errs)[:150]})" if errs else ""))
+        else:
+            self.status.setText("프로그램 안에서 결과를 가져오지 못해 브라우저로 Google 이미지를 열었습니다. "
+                                "원하는 이미지를 이 창으로 끌어다 놓으세요." if google_failed
+                                else "결과가 없습니다. 검색어를 바꿔 보세요.")
+            if google_failed:
+                self.open_browser()
+        icon = self.list.iconSize().width()
         for i, c in enumerate(cands):
             size = f"{c.width}×{c.height}" if c.width else "원본"
-            it = QListWidgetItem(f"[{c.source}] {size}\n{c.info[:50]}")
+            it = QListWidgetItem(f"{size}\n{c.info[:40]}" if c.source == "Google"
+                                 else f"[{c.source}] {size}\n{c.info[:40]}")
             it.setData(Qt.UserRole, i)
+            it.setToolTip(c.full_url)
             self.list.addItem(it)
             run_async(web.download, c.thumb_url,
-                      on_done=lambda d, it=it: it.setIcon(QIcon(pixmap_from_bytes(d, 200))),
+                      on_done=lambda d, it=it: it.setIcon(QIcon(pixmap_from_bytes(d, icon))),
                       on_fail=lambda e: None)
 
     def use_selected(self):

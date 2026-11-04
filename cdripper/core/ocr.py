@@ -166,6 +166,14 @@ def parse_tracklist(text: str) -> list[tuple[int | None, str]]:
     return out
 
 
+def guess_track_count(parsed: list[tuple[int | None, str]]) -> int:
+    """Track count when no CD is inserted: highest track number, else number of lines."""
+    nums = [n for n, _ in parsed if n is not None]
+    if len(nums) >= 2:
+        return min(max(nums), 99)
+    return min(len(parsed), 99)
+
+
 def assign_titles(parsed: list[tuple[int | None, str]], n_tracks: int) -> dict[int, str]:
     """Map parsed lines to track numbers. Numbered lines win; otherwise sequential."""
     numbered = {n: t for n, t in parsed if n is not None and 1 <= n <= n_tracks}

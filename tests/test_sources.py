@@ -60,6 +60,29 @@ def test_itunes_and_deezer(monkeypatch):
 
 def test_google_query_is_exactly_user_input():
     from urllib.parse import parse_qs, urlparse
-    q = parse_qs(urlparse(web.google_images_url("아이유", "Palette")).query)["q"][0]
+    q = parse_qs(urlparse(web.google_images_url("아이유 Palette")).query)["q"][0]
     assert q == "아이유 Palette"
-    assert parse_qs(urlparse(web.google_images_url("", "my photo")).query)["q"][0] == "my photo"
+
+
+def test_google_query_sent_as_typed(monkeypatch):
+    sent = {}
+
+    class R:
+        text = '["https://encrypted-tbn0.gstatic.com/images?q\\u003dtbn:AAA",225,225],' \
+               '["https://example.com/a/cover.jpg",1200,1200],' \
+               '["https://encrypted-tbn0.gstatic.com/images?q\\u003dtbn:BBB",200,300],' \
+               '["https://www.photos.net/b.png",900,600],["https://tiny.net/x.png",20,20]'
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get(url, params=None, **kw):
+        sent.update(params)
+        return R()
+    monkeypatch.setattr(web.session, "get", fake_get)
+    res = web.google_image_search("내 사진 앨범")
+    assert sent["q"] == "내 사진 앨범"                     # nothing appended
+    assert [(c.full_url, c.width, c.height, c.info) for c in res] == [
+        ("https://example.com/a/cover.jpg", 1200, 1200, "example.com"),
+        ("https://www.photos.net/b.png", 600, 900, "photos.net")]
+    assert res[0].thumb_url == "https://encrypted-tbn0.gstatic.com/images?q=tbn:AAA"

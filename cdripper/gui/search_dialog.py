@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout
 from ..core.metadata import AlbumMeta
 from ..core.toc import Toc
 from ..sources import web
-from .util import pixmap_from_bytes, run_async
+from .util import fit_to_screen, pixmap_from_bytes, px, run_async
 
 
 class SearchDialog(QDialog):
@@ -18,7 +18,7 @@ class SearchDialog(QDialog):
                  preset: list[AlbumMeta] | None = None):
         super().__init__(parent)
         self.setWindowTitle("앨범 정보 검색")
-        self.resize(1100, 640)
+        fit_to_screen(self, 1100, 640)
         self.toc, self.country = toc, country
         self.results: list[AlbumMeta] = []
         self.selected: AlbumMeta | None = None
@@ -53,7 +53,7 @@ class SearchDialog(QDialog):
         side = QWidget()
         sl = QVBoxLayout(side)
         self.cover = QLabel(alignment=Qt.AlignCenter)
-        self.cover.setFixedSize(240, 240)
+        self.cover.setFixedSize(px(200), px(200))
         self.cover.setStyleSheet("border:1px solid #888;")
         self.tracks = QListWidget()
         sl.addWidget(self.cover, alignment=Qt.AlignHCenter)
@@ -137,7 +137,7 @@ class SearchDialog(QDialog):
         self.cover.clear()
         if a.cover_url:
             run_async(web.download, a.cover_url,
-                      on_done=lambda d: gen == self._gen and self.cover.setPixmap(pixmap_from_bytes(d, 238)),
+                      on_done=lambda d: gen == self._gen and self.cover.setPixmap(pixmap_from_bytes(d, px(200) - 2)),
                       on_fail=lambda e: None)
 
         def done(full: AlbumMeta):

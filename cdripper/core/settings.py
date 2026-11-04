@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
 
 def config_dir() -> str:
@@ -40,6 +40,9 @@ class Settings:
     ocr_lang: str = "ko"
     camera_index: int = 0
     last_drive: str = ""
+    font_pt: int = 18                    # UI font size (2x the original 9 pt)
+    cover_music_sources: bool = False
+    hidden_columns: list = field(default_factory=lambda: ["lyricist", "isrc"])    # cover search: also query iTunes/Deezer/CAA besides Google
 
     @classmethod
     def load(cls) -> "Settings":
