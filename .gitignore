@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+ffmpeg.exe
+.pytest_cache/
+*.zip

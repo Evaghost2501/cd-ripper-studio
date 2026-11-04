@@ -1,0 +1,16 @@
+PySide6>=6.6
+mutagen>=1.47
+lameenc>=1.7
+soundfile>=0.12
+soxr>=0.3
+numpy>=1.26
+requests>=2.31
+opencv-python-headless>=4.9
+# Windows built-in OCR (only installed on Windows)
+winrt-runtime>=2.0; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=2.0; sys_platform == "win32"
+winrt-Windows.Globalization>=2.0; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=2.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation>=2.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2.0; sys_platform == "win32"
