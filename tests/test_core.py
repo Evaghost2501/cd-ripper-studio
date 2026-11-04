@@ -161,3 +161,45 @@ def test_secure_mode_recovers_flaky_reads():
     res = TrackReader(d, d.read_toc()).rip(2, True)
     assert res.rereads > 0 and not res.unrecovered
     assert res.pcm == good
+
+
+def test_stale_handle_is_reopened_once():
+    from cdripper.core.drive import DriveError, call_with_recovery
+    calls, reopens = [], []
+
+    def call():
+        calls.append(1)
+        if len(calls) == 1:
+            raise DriveError("stale", 55)       # ERROR_DEV_NOT_EXIST after a disc change
+        return "toc"
+    assert call_with_recovery(call, lambda: reopens.append(1)) == "toc"
+    assert len(calls) == 2 and len(reopens) == 1
+
+
+def test_stale_handle_gives_up_after_one_reopen():
+    from cdripper.core.drive import DriveError, call_with_recovery
+
+    def call():
+        raise DriveError("stale", 55)
+    with pytest.raises(DriveError):
+        call_with_recovery(call, lambda: None)
+
+
+def test_not_ready_waits_for_spin_up():
+    from cdripper.core.drive import DriveError, call_with_recovery
+    n = [0]
+
+    def call():
+        n[0] += 1
+        if n[0] < 4:
+            raise DriveError("not ready", 21)
+        return "ok"
+    assert call_with_recovery(call, lambda: None, retries_not_ready=5, wait=0) == "ok"
+    with pytest.raises(DriveError):            # without retries "no disc" is reported immediately
+        n[0] = 0
+        call_with_recovery(call, lambda: None, retries_not_ready=0, wait=0)
+
+
+def test_error_text_korean():
+    from cdripper.core.drive import describe_error
+    assert "끊겼" in describe_error(55) and "[코드 55]" in describe_error(55)

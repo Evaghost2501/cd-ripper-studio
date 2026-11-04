@@ -10,6 +10,8 @@ import math
 import os
 import struct
 import sys
+import threading
+import time
 
 from .toc import SECTOR_BYTES, Toc, TocTrack
 
@@ -18,7 +20,56 @@ MAX_SECTORS_PER_READ = 26        # 26*2352 = 61 152 bytes (< 64 KiB driver limit
 
 
 class DriveError(Exception):
-    pass
+    def __init__(self, msg: str, winerror: int = 0):
+        super().__init__(msg)
+        self.winerror = winerror
+
+
+# Windows error codes
+ERROR_INVALID_HANDLE = 6
+ERROR_NOT_READY = 21                 # no disc / disc still spinning up
+ERROR_DEV_NOT_EXIST = 55             # handle became stale (media changed, drive reset)
+ERROR_MEDIA_CHANGED = 1110
+ERROR_DEVICE_NOT_CONNECTED = 1167
+ERROR_NO_MEDIA_IN_DRIVE = 1112
+STALE_HANDLE_ERRORS = {ERROR_INVALID_HANDLE, ERROR_DEV_NOT_EXIST, ERROR_MEDIA_CHANGED, ERROR_DEVICE_NOT_CONNECTED}
+NO_DISC_ERRORS = {ERROR_NOT_READY, ERROR_NO_MEDIA_IN_DRIVE}
+
+ERROR_TEXT = {
+    ERROR_NOT_READY: "드라이브가 준비되지 않았습니다 (디스크가 없거나 아직 회전 중)",
+    ERROR_NO_MEDIA_IN_DRIVE: "드라이브에 디스크가 없습니다",
+    ERROR_DEV_NOT_EXIST: "드라이브 연결이 끊겼습니다 (디스크 교체됨)",
+    ERROR_MEDIA_CHANGED: "디스크가 교체되었습니다",
+    ERROR_DEVICE_NOT_CONNECTED: "드라이브가 연결되어 있지 않습니다",
+    ERROR_INVALID_HANDLE: "드라이브 핸들이 유효하지 않습니다",
+    5: "드라이브 접근이 거부되었습니다 (다른 프로그램이 사용 중일 수 있음)",
+    23: "디스크를 읽을 수 없습니다 (긁힘·오염 또는 오디오 CD가 아님)",
+}
+
+
+def describe_error(code: int) -> str:
+    return f"{ERROR_TEXT.get(code, 'Windows 오류')} [코드 {code}]"
+
+
+def call_with_recovery(call, reopen, retries_not_ready: int = 0, wait: float = 1.0):
+    """Run call(); if the handle went stale, reopen once and retry.
+    If the drive is 'not ready' (disc spinning up), retry up to retries_not_ready times."""
+    reopened = False
+    attempt = 0
+    while True:
+        try:
+            return call()
+        except DriveError as e:
+            if e.winerror in STALE_HANDLE_ERRORS and not reopened:
+                reopened = True
+                reopen()
+                continue
+            if e.winerror in NO_DISC_ERRORS and attempt < retries_not_ready:
+                attempt += 1
+                time.sleep(wait)
+                reopen()
+                continue
+            raise
 
 
 class BaseDrive:
@@ -78,6 +129,7 @@ if IS_WINDOWS:
         def __init__(self, letter: str):
             self.letter = letter.upper().rstrip(":\\")
             self.handle = None
+            self.lock = threading.RLock()      # GUI poll thread and worker threads share the handle
             name = ctypes.create_unicode_buffer(261)
             k32.GetVolumeInformationW(f"{self.letter}:\\", name, 261, None, None, None, None, 0)
             self.label = f"{self.letter}:" + (f"  [{name.value}]" if name.value else "")
@@ -88,11 +140,12 @@ if IS_WINDOWS:
             h = k32.CreateFileW(f"\\\\.\\{self.letter}:", GENERIC_READ,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None)
             if h == INVALID_HANDLE or h is None:
-                raise DriveError(f"드라이브 {self.letter}: 를 열 수 없습니다 (오류 {ctypes.get_last_error()})")
+                err = ctypes.get_last_error()
+                raise DriveError(f"드라이브 {self.letter}: 를 열 수 없습니다 — {describe_error(err)}", err)
             self.handle = h
             return h
 
-        def _ioctl(self, code, inbuf=None, outsize=0):
+        def _ioctl_once(self, code, inbuf=None, outsize=0):
             h = self._open()
             out = ctypes.create_string_buffer(outsize) if outsize else None
             returned = wintypes.DWORD(0)
@@ -101,11 +154,18 @@ if IS_WINDOWS:
             out_ptr = ctypes.cast(out, wintypes.LPVOID) if out is not None else None
             ok = k32.DeviceIoControl(h, code, in_ptr, in_len, out_ptr, outsize, ctypes.byref(returned), None)
             if not ok:
-                raise DriveError(f"DeviceIoControl 0x{code:08X} 실패 (오류 {ctypes.get_last_error()})")
+                err = ctypes.get_last_error()
+                raise DriveError(f"{describe_error(err)} (IOCTL 0x{code:08X})", err)
             return out.raw[:returned.value] if out is not None else b""
 
+        def _ioctl(self, code, inbuf=None, outsize=0, retries_not_ready=0):
+            with self.lock:
+                return call_with_recovery(lambda: self._ioctl_once(code, inbuf, outsize), self.close,
+                                          retries_not_ready)
+
         def read_toc(self) -> Toc:
-            raw = self._ioctl(IOCTL_CDROM_READ_TOC, outsize=804)
+            # a freshly inserted disc can report "not ready" for several seconds while it spins up
+            raw = self._ioctl(IOCTL_CDROM_READ_TOC, outsize=804, retries_not_ready=15)
             if len(raw) < 4:
                 raise DriveError("TOC를 읽을 수 없습니다. 오디오 CD가 들어있는지 확인하세요.")
             first, last = raw[2], raw[3]
@@ -158,9 +218,10 @@ if IS_WINDOWS:
             self._ioctl(IOCTL_STORAGE_LOAD_MEDIA)
 
         def close(self):
-            if self.handle:
-                k32.CloseHandle(self.handle)
-                self.handle = None
+            with self.lock:
+                if self.handle:
+                    k32.CloseHandle(self.handle)
+                    self.handle = None
 
 
 def parse_cdtext(packs: bytes) -> dict:
