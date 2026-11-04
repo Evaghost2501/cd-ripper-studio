@@ -6,6 +6,12 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 
 
+def logs_dir() -> str:
+    d = os.path.join(config_dir(), "logs")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def config_dir() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
     d = os.path.join(base, "CDRipperStudio")
@@ -29,7 +35,7 @@ class Settings:
     save_cover_file: bool = True         # folder.jpg next to tracks
     write_m3u: bool = True
     write_cue: bool = True
-    write_log: bool = True
+    log_in_album_folder: bool = False    # rip log always goes to %APPDATA%\\CDRipperStudio\\logs; copy optional
     secure_mode: bool = True
     read_offset: int = 0                 # samples; see accuraterip.com/driveoffsets.htm
     accuraterip: bool = True
@@ -44,7 +50,8 @@ class Settings:
     last_drive: str = ""
     font_pt: int = 18                    # UI font size (2x the original 9 pt)
     cover_music_sources: bool = False
-    hidden_columns: list = field(default_factory=lambda: ["lyricist", "isrc"])    # cover search: also query iTunes/Deezer/CAA besides Google
+    hidden_columns: list = field(default_factory=lambda: ["lyricist", "isrc"])
+    column_widths: dict = field(default_factory=dict)   # track table, at 9 pt scale    # cover search: also query iTunes/Deezer/CAA besides Google
 
     @classmethod
     def load(cls) -> "Settings":

@@ -44,7 +44,8 @@ class SettingsDialog(QDialog):
         self.folderjpg = QCheckBox("폴더에 folder.jpg 저장 (원본 해상도)"); self.folderjpg.setChecked(s.save_cover_file)
         self.m3u = QCheckBox("재생목록(.m3u8) 생성"); self.m3u.setChecked(s.write_m3u)
         self.cue = QCheckBox("큐시트(.cue) 생성"); self.cue.setChecked(s.write_cue)
-        self.log = QCheckBox("추출 로그(.log) 생성"); self.log.setChecked(s.write_log)
+        self.log = QCheckBox("추출 로그(.log)를 앨범 폴더에도 저장 (기본: 프로그램 로그 폴더에만)")
+        self.log.setChecked(s.log_in_album_folder)
         self.flac = QCheckBox("보관용 FLAC 사본도 함께 만들기 (_FLAC 폴더)"); self.flac.setChecked(s.extra_flac)
         self.vtpl = QLineEdit(s.various_template)
         f.addRow("MP3 태그 버전", self.id3); f.addRow(self.embed); f.addRow("내장 커버 최대 크기", self.cmax)
@@ -91,7 +92,7 @@ class SettingsDialog(QDialog):
         s.id3v23 = self.id3.currentIndex() == 0
         s.embed_cover, s.cover_max_px = self.embed.isChecked(), self.cmax.currentData()
         s.save_cover_file, s.write_m3u = self.folderjpg.isChecked(), self.m3u.isChecked()
-        s.write_cue, s.write_log, s.extra_flac = self.cue.isChecked(), self.log.isChecked(), self.flac.isChecked()
+        s.write_cue, s.log_in_album_folder, s.extra_flac = self.cue.isChecked(), self.log.isChecked(), self.flac.isChecked()
         s.various_template = self.vtpl.text().strip() or s.various_template
         s.auto_lookup, s.store_country = self.auto.isChecked(), self.country.currentText()
         s.ocr_engine, s.ocr_lang = self.engine.currentData(), self.lang.currentData()

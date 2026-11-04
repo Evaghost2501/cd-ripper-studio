@@ -12,7 +12,7 @@ from . import accuraterip, encoders, naming, tagger
 from .drive import BaseDrive
 from .metadata import AlbumMeta, track_values
 from .ripper import Cancelled, TrackReader
-from .settings import Settings
+from .settings import Settings, logs_dir
 from .toc import Toc, fmt_duration
 
 
@@ -171,10 +171,15 @@ class RipJob:
                 lines.append("    INDEX 01 00:00:00")
             with open(os.path.join(folder, base + ".cue"), "w", encoding="utf-8-sig") as f:
                 f.write("\n".join(lines) + "\n")
-        if s.write_log:
-            report.log_path = os.path.join(folder, base + ".log")
-            with open(report.log_path, "w", encoding="utf-8") as f:
-                f.write(self._log_text(report))
+        # the rip log is kept out of the music folder (program folder → logs), copy only if asked
+        text = self._log_text(report)
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        report.log_path = os.path.join(logs_dir(), f"{stamp} {base}.log")
+        with open(report.log_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        if s.log_in_album_folder:
+            with open(os.path.join(folder, base + ".log"), "w", encoding="utf-8") as f:
+                f.write(text)
 
     def _log_text(self, report: JobReport) -> str:
         s, a = self.s, self.album

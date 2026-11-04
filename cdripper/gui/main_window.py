@@ -6,7 +6,7 @@ import os
 import re
 
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QFontMetrics, QShortcut, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
@@ -19,19 +19,22 @@ from ..core import encoders, naming, ocr
 from ..core.drive import BaseDrive, DriveError, list_drives
 from ..core.job import JobReport, RipJob, TrackReport, ar_text, output_path
 from ..core.metadata import ALBUM_FIELDS, GENRES, AlbumMeta, TrackMeta, track_values
-from ..core.settings import Settings, config_dir
+from ..core.settings import Settings, config_dir, logs_dir
 from ..core.toc import Toc, fmt_duration
 from ..sources import web
 from .cover_dialog import CoverDialog
 from .ocr_dialog import OcrDialog
 from .search_dialog import SearchDialog
 from .settings_dialog import SettingsDialog
-from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async
+from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async, ui_scale
 
 COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
         ("lyricist", "작사"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
 COL = {k: i for i, (k, _) in enumerate(COLS)}
 EDITABLE = {"title", "artist", "composer", "lyricist", "isrc"}
+# default column widths at the original 9 pt size (scaled with the UI size); the last column fills the rest
+DEFAULT_COL_WIDTHS = {"rip": 30, "number": 34, "title": 230, "artist": 150, "composer": 90, "lyricist": 80,
+                      "isrc": 100, "length": 48}
 
 
 class RipThread(QThread):
@@ -92,6 +95,8 @@ class MainWindow(QMainWindow):
         self.rip_thread: RipThread | None = None
         self._media = None
         self._fill_empty_only = False
+        self._font_timer = QTimer(self, singleShot=True, interval=150,
+                                  timeout=lambda: self.set_ui_size(self.ui_slider.value()))
         self._build_ui()
         self.refresh_drives()
         self.poll = QTimer(self, interval=2000, timeout=self._poll_media)
@@ -101,6 +106,7 @@ class MainWindow(QMainWindow):
     # ================================================================ UI
     def _build_ui(self):
         tb = QToolBar("main", movable=False)
+        self._toolbar = tb
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
         tb.addWidget(QLabel(" 드라이브 "))
@@ -109,7 +115,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.drive_combo)
 
         def act(text, fn, tip="", shortcut=None):
-            a = QAction(text, self)
+            a = QAction(text, tb)
             a.triggered.connect(fn)
             a.setToolTip(tip or text)
             if shortcut:
@@ -135,9 +141,8 @@ class MainWindow(QMainWindow):
         self.ui_size_lbl = QLabel()
         tb.addWidget(self.ui_slider)
         tb.addWidget(self.ui_size_lbl)
-        self._font_timer = QTimer(self, singleShot=True, interval=250,
-                                  timeout=lambda: self.set_ui_size(self.ui_slider.value()))
         self.ui_slider.valueChanged.connect(self._ui_slider_moved)
+        self.ui_slider.sliderReleased.connect(lambda: self._font_timer.start())
         self._ui_slider_moved(self.ui_slider.value(), apply=False)
 
         # menu
@@ -159,6 +164,7 @@ class MainWindow(QMainWindow):
         h.addAction("드라이브 오프셋 찾기 (AccurateRip)",
                     lambda: QDesktopServices.openUrl(QUrl("http://www.accuraterip.com/driveoffsets.htm")))
         h.addAction("이 디스크를 MusicBrainz에 등록하기", self.submit_mb)
+        h.addAction("추출 로그 폴더 열기", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(logs_dir())))
         h.addAction("정보", lambda: QMessageBox.about(
             self, "정보", f"CD Ripper Studio {__version__}\n\nMusicBrainz · Cover Art Archive · iTunes · Deezer · "
                          "AccurateRip 데이터를 사용합니다.\nMP3 인코딩: LAME"))
@@ -252,9 +258,10 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed |
                                    QAbstractItemView.AnyKeyPressed)
         hh = self.table.horizontalHeader()
-        # title and artist share the free space; the rest stay compact
-        hh.setSectionResizeMode(COL["title"], QHeaderView.Stretch)
-        hh.setSectionResizeMode(COL["artist"], QHeaderView.Stretch)
+        # every column can be resized by dragging the header edge; widths are remembered
+        hh.setSectionResizeMode(QHeaderView.Interactive)
+        hh.setStretchLastSection(True)
+        hh.sectionResized.connect(self._column_resized)
         # less-used columns hidden by default; right-click the header to show/hide (choice is remembered)
         for k in self.s.hidden_columns:
             if k in COL:
@@ -368,10 +375,13 @@ class MainWindow(QMainWindow):
         self.left_scroll.setMaximumWidth(px(400))
         hh = self.table.horizontalHeader()
         hh.setMinimumSectionSize(px(28))
-        for k, w in (("rip", 30), ("number", 34), ("artist", 130), ("composer", 80), ("lyricist", 70),
-                     ("isrc", 95), ("length", 46), ("status", 110)):
-            self.table.setColumnWidth(COL[k], px(w))
-        self.table.verticalHeader().setDefaultSectionSize(self.table.fontMetrics().height() + px(8))
+        widths = {**DEFAULT_COL_WIDTHS, **self.s.column_widths}
+        self._applying_widths = True
+        for k, _ in COLS:
+            if k in widths:
+                self.table.setColumnWidth(COL[k], max(px(20), int(widths[k] * ui_scale())))
+        self._applying_widths = False
+        self.table.verticalHeader().setDefaultSectionSize(QFontMetrics(QApplication.font()).height() + px(8))
         self.right.setMinimumHeight(px(110))
         f = QApplication.font()
         f.setBold(True)
@@ -379,23 +389,65 @@ class MainWindow(QMainWindow):
         self.rip_btn.setFont(f)
         self.rip_btn.setMinimumHeight(px(32))
         self.rip_btn.setMinimumWidth(px(170))
-        self.logbox.setFixedHeight(self.logbox.fontMetrics().lineSpacing() * 3 + 14)   # always 3 lines
+        self.logbox.setFixedHeight(QFontMetrics(QApplication.font()).lineSpacing() * 3 + 14)   # always 3 lines
+
+    def _column_resized(self, index, _old, new):
+        if getattr(self, "_applying_widths", False):
+            return
+        key = COLS[index][0]
+        if key == COLS[-1][0]:          # last column just fills the remaining space
+            return
+        self.s.column_widths = {**self.s.column_widths, key: round(new / ui_scale())}
+        self._save_soon()
 
     def _ui_slider_moved(self, v, apply=True):
         self.ui_size_lbl.setText(f" {v} ")
-        if apply:
+        if apply and not self.ui_slider.isSliderDown():   # keyboard / wheel / click on the track
             self._font_timer.start()
 
     def set_ui_size(self, pt: int):
-        """Change the whole UI size live (font + every font-dependent size)."""
+        """Change the whole UI size: new font, then rebuild the window at that size.
+
+        Rebuilding (instead of only changing the font) guarantees that every widget follows:
+        Qt does not re-propagate fonts to widgets with style sheets and caches combo-box sizes."""
+        if self._busy():
+            self.ui_slider.setValue(self.s.font_pt)
+            return self.log("리핑 중에는 UI 크기를 바꿀 수 없습니다.")
         f = QApplication.font()
         if f.pointSize() == pt:
             return
         f.setPointSize(pt)
         QApplication.setFont(f)
+        QApplication.sendPostedEvents()        # let the window pick up the new font before rebuilding
         self.s.font_pt = pt
         self._save_soon()
-        QTimer.singleShot(0, self._apply_scale)   # after the font change has propagated
+        self._rebuild_ui()
+
+    def _rebuild_ui(self):
+        keep = {"log": self.logbox.toPlainText(), "status": self.status.text(),
+                "disc": self.disc_info.text(), "progress": self.progress.value(),
+                "track_status": {self.album.tracks[r].number: self.table.item(r, COL["status"]).text()
+                                 for r in range(self.table.rowCount())
+                                 if r < len(self.album.tracks) and self.table.item(r, COL["status"])}}
+        self.removeToolBar(self._toolbar)
+        self._toolbar.setParent(None)          # detach now (its shortcuts die with it), free later
+        self._toolbar.deleteLater()
+        for m in self.menuBar().findChildren(QMenu):
+            m.setParent(None)
+            m.deleteLater()
+        self.menuBar().clear()
+        self._build_ui()                       # replaces the central widget
+        self._fill_drive_combo()
+        self.refresh_all()
+        self.set_cover(self.cover)
+        self.logbox.setPlainText(keep["log"])
+        self.logbox.moveCursor(QTextCursor.MoveOperation.End)
+        self.status.setText(keep["status"])
+        self.disc_info.setText(keep["disc"])
+        self.progress.setValue(keep["progress"])
+        for r, t in enumerate(self.album.tracks):
+            if t.number in keep["track_status"]:
+                self.table.item(r, COL["status"]).setText(keep["track_status"][t.number])
 
     # ================================================================ genre / folders
     def _genre_chosen(self, name):
@@ -419,6 +471,9 @@ class MainWindow(QMainWindow):
     # ================================================================ drives
     def refresh_drives(self):
         self.drives = list_drives()
+        self._fill_drive_combo()
+
+    def _fill_drive_combo(self):
         self.drive_combo.blockSignals(True)
         self.drive_combo.clear()
         for d in self.drives:

@@ -167,3 +167,35 @@ def test_old_default_template_migrates(tmp_path, monkeypatch):
     with open(os.path.join(config_dir(), "settings.json"), "w") as f:
         json.dump({"template": "{albumartist}/[{year} - ]{album}/{track:02}. {title}"}, f)
     assert Settings.load().template == "{track:02}. {title}"
+
+
+def test_columns_resizable_and_remembered(win):
+    w, app, tmp = win
+    from PySide6.QtWidgets import QHeaderView
+    from cdripper.gui.main_window import COL, MainWindow
+    hh = w.table.horizontalHeader()
+    for k in ("title", "artist", "composer", "length"):
+        assert hh.sectionResizeMode(COL[k]) == QHeaderView.Interactive
+    w.table.setColumnWidth(COL["title"], 333)               # = the user dragging the header edge
+    w._save_timer.timeout.emit()
+    w2 = MainWindow()
+    assert abs(w2.table.columnWidth(COL["title"]) - 333) <= 2
+    w2.close()
+
+
+def test_ui_size_change_resizes_everything(win):
+    w, app, _ = win
+    w.album_edits["album"].setText("Keep me"); w._album_edited("album", "Keep me")
+    w.log("hello log")
+    w.set_ui_size(20)
+    app.processEvents()
+    big = {n: x.height() for n, x in (("fmt", w.fmt), ("tpl", w.tpl), ("preview", w.preview), ("log", w.logbox))}
+    w.set_ui_size(10)
+    app.processEvents()
+    for n, x in (("fmt", w.fmt), ("tpl", w.tpl), ("preview", w.preview), ("log", w.logbox)):
+        assert x.font().pointSize() == 10, n
+        assert x.sizeHint().height() < big[n] or x.height() < big[n], n
+    assert w.album_edits["album"].text() == "Keep me"          # data survives the rebuild
+    assert "hello log" in w.logbox.toPlainText()
+    assert len(w.findChildren(type(w._toolbar))) == 1          # no duplicated toolbars
+    w.set_ui_size(9)
