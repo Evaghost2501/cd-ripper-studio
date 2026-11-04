@@ -5,6 +5,7 @@ soundfile>=0.12
 soxr>=0.3
 numpy>=1.26
 requests>=2.31
+beautifulsoup4>=4.12
 opencv-python-headless>=4.9
 # Windows built-in OCR (only installed on Windows)
 winrt-runtime>=2.0; sys_platform == "win32"

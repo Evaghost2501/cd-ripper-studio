@@ -15,9 +15,11 @@ from .util import fit_to_screen, pixmap_from_bytes, px, run_async
 
 class SearchDialog(QDialog):
     def __init__(self, parent, artist: str, album: str, toc: Toc | None, country: str = "KR",
-                 preset: list[AlbumMeta] | None = None):
+                 preset: list[AlbumMeta] | None = None, genre: str = "Music",
+                 sources: list[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("앨범 정보 검색")
+        self.setWindowTitle("앨범 / 도서 정보 검색")
+        self.books_first = genre == "Audiobook"
         fit_to_screen(self, 1100, 640)
         self.toc, self.country = toc, country
         self.results: list[AlbumMeta] = []
@@ -26,23 +28,29 @@ class SearchDialog(QDialog):
 
         lay = QVBoxLayout(self)
         row = QHBoxLayout()
-        self.artist = QLineEdit(artist, placeholderText="아티스트")
-        self.album = QLineEdit(album, placeholderText="앨범 이름")
-        self.btn = QPushButton("검색")
+        self.artist = QLineEdit(artist, placeholderText="아티스트 / 저자")
+        self.album = QLineEdit(album, placeholderText="앨범 / 도서 제목")
+        self.btn = QPushButton("🔍 검색")
         self.btn.setDefault(True)
-        row.addWidget(QLabel("아티스트")); row.addWidget(self.artist, 2)
-        row.addWidget(QLabel("앨범")); row.addWidget(self.album, 3)
-        self.src = {}
-        for s in ("MusicBrainz", "iTunes", "Deezer"):
-            cb = QCheckBox(s, checked=True)
-            self.src[s] = cb
-            row.addWidget(cb)
+        row.addWidget(QLabel("아티스트·저자")); row.addWidget(self.artist, 2)
+        row.addWidget(QLabel("앨범·도서")); row.addWidget(self.album, 3)
         row.addWidget(self.btn)
         lay.addLayout(row)
+        src_row = QHBoxLayout()
+        chosen = set(sources) if sources else set(web.CD_SOURCES + web.BOOK_SOURCES)
+        self.src = {}
+        for group, names in (("CD:", web.CD_SOURCES), ("   도서(오디오북):", web.BOOK_SOURCES)):
+            src_row.addWidget(QLabel(group))
+            for s in names:
+                cb = QCheckBox(s, checked=s in chosen)
+                self.src[s] = cb
+                src_row.addWidget(cb)
+        src_row.addStretch()
+        lay.addLayout(src_row)
 
         split = QSplitter()
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["출처", "아티스트", "앨범", "발매", "트랙", "비고"])
+        self.table.setHorizontalHeaderLabels(["출처", "아티스트·저자", "앨범·도서", "발매", "트랙", "레이블·출판사 / 비고"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -101,13 +109,20 @@ class SearchDialog(QDialog):
     def _show(self, results, errs=None):
         self.btn.setEnabled(True)
         n = len(self.toc.audio_tracks) if self.toc else 0
-        # results with matching track count first
-        results = sorted(results, key=lambda a: (len(a.tracks) != n) if n else 0)
+
+        def rank(a):
+            book = getattr(a, "_is_book", False)
+            # audiobook: books first; music: CDs with the same track count first
+            first = (not book) if self.books_first else book
+            return (first, (len(a.tracks) != n) if (n and not book) else 0)
+        results = sorted(results, key=rank)
         self.results = results
         self.table.setRowCount(len(results))
         for r, a in enumerate(results):
-            match = n and len(a.tracks) == n
-            vals = [a.source, a.albumartist, a.album, a.date, str(len(a.tracks)),
+            book = getattr(a, "_is_book", False)
+            match = n and not book and len(a.tracks) == n
+            vals = [a.source, a.albumartist, a.album, a.date, "📖 도서" if book else str(len(a.tracks)),
+                    a.label if book else
                     ("✔ 트랙 수 일치" if match else "") + (" 디스크 ID 일치" if a.mb_discid else "")]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
@@ -133,7 +148,7 @@ class SearchDialog(QDialog):
         gen = self._gen
         self.ok_btn.setEnabled(False)
         self.tracks.clear()
-        self.tracks.addItem("트랙 목록 불러오는 중…")
+        self.tracks.addItem("불러오는 중…")
         self.cover.clear()
         if a.cover_url:
             run_async(web.download, a.cover_url,
@@ -145,6 +160,16 @@ class SearchDialog(QDialog):
                 return
             self.results[rows[0].row()] = full
             self.tracks.clear()
+            if getattr(full, "_is_book", False):
+                for label, v in (("제목", full.album), ("저자", full.albumartist), ("출판사", full.label),
+                                 ("발행일", full.date)):
+                    if v:
+                        self.tracks.addItem(f"{label}: {v}")
+                self.tracks.addItem("")
+                self.tracks.addItem("적용하면 앨범 정보(제목·저자·레이블·날짜·커버)에 들어가고")
+                self.tracks.addItem("장르는 Audiobook으로 설정됩니다. 트랙 제목은 바뀌지 않습니다.")
+                self.ok_btn.setEnabled(True)
+                return
             for t in full.tracks:
                 extra = f"  — {t.artist}" if t.artist and t.artist != full.albumartist else ""
                 self.tracks.addItem(f"{t.number:02d}. {t.title}{extra}")

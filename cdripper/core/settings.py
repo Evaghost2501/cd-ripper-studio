@@ -19,6 +19,10 @@ def config_dir() -> str:
     return d
 
 
+DEFAULT_TITLE_PRESETS = ["JYbooks' Company Song", "Story Song", "Story Reading", "Echo Chant", "Kids Song",
+                         "Melody"]
+
+
 @dataclass
 class Settings:
     output_dir: str = os.path.join(os.path.expanduser("~"), "Music", "CD Rips")
@@ -52,7 +56,10 @@ class Settings:
     font_pt: int = 18                    # UI font size (2x the original 9 pt)
     cover_music_sources: bool = False
     hidden_columns: list = field(default_factory=lambda: ["lyricist", "isrc"])
-    column_widths: dict = field(default_factory=dict)   # track table, at 9 pt scale    # cover search: also query iTunes/Deezer/CAA besides Google
+    column_widths: dict = field(default_factory=dict)   # track table, at 9 pt scale
+    label_presets: list = field(default_factory=lambda: ["JYbooks"])   # one-click label buttons
+    title_presets: list = field(default_factory=lambda: list(DEFAULT_TITLE_PRESETS))  # quick track titles
+    search_sources: list = field(default_factory=list)  # remembered checkboxes in the search dialog    # cover search: also query iTunes/Deezer/CAA besides Google
 
     @classmethod
     def load(cls) -> "Settings":

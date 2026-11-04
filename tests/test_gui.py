@@ -230,3 +230,52 @@ def test_playlist_and_cue_off_by_default_and_migrated(tmp_path, monkeypatch):
     assert s.write_m3u is False and s.write_cue is False
     s.write_cue = True; s.save()                               # a later explicit choice is kept
     assert Settings.load().write_cue is True
+
+
+def test_quick_title_buttons_main_table(win):
+    w, app, _ = win
+    from PySide6.QtWidgets import QPushButton
+    from cdripper.gui.main_window import COL
+    names = [b.text() for b in w.title_bar.findChildren(QPushButton)]
+    assert names[:6] == ["JYbooks' Company Song", "Story Song", "Story Reading", "Echo Chant", "Kids Song",
+                         "Melody"]
+    w.table.selectRow(1)
+    w.title_bar.chosen.emit("Story Song")              # = click
+    w.title_bar.chosen.emit("Echo Chant")              # selection moved to the next track
+    assert [t.title for t in w.album.tracks][1:3] == ["Story Song", "Echo Chant"]
+    assert w.album.tracks[2].rip                       # a title ticks the track
+    w.table.clearSelection()
+    w.table.selectRow(0); w.table.selectRow(3)
+    from PySide6.QtCore import QItemSelectionModel
+    sm = w.table.selectionModel()
+    sm.select(w.table.model().index(0, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+    w.title_bar.chosen.emit("Melody")                  # several rows at once
+    assert w.album.tracks[0].title == "Melody" and w.album.tracks[3].title == "Melody"
+
+
+def test_quick_title_list_is_editable_and_saved(win):
+    w, app, tmp = win
+    import json
+    w.title_bar.edited.emit(["Intro", "Story Song"])   # what the edit dialog emits
+    w.title_bar.set_presets(["Intro", "Story Song"])
+    w._save_timer.timeout.emit()
+    saved = json.load(open(tmp / "CDRipperStudio" / "settings.json", encoding="utf-8"))
+    assert saved["title_presets"] == ["Intro", "Story Song"]
+
+
+def test_quick_title_in_webcam_dialog():
+    from cdripper.gui.ocr_dialog import OcrDialog
+    dlg = OcrDialog(None, 4, presets=["Story Song", "Melody"])
+    dlg.text.setPlainText("01. 잘 인식된 곡\n02. ?!@#\n03.\n04.")   # poor recognition
+    dlg.table.selectRow(1)
+    dlg._quick_title("Story Song")
+    dlg._quick_title("Melody")
+    dlg._accept()
+    assert dlg.result[1]["title"] == "잘 인식된 곡"
+    assert dlg.result[2]["title"] == "Story Song" and dlg.result[3]["title"] == "Melody"
+    # no CD, no text: titles picked one after another create the tracks
+    dlg2 = OcrDialog(None, 0, presets=["Story Song", "Melody"])
+    for t in ("Story Song", "Melody", "Story Song"):
+        dlg2._quick_title(t)
+    dlg2._accept()
+    assert dlg2.n_tracks == 3 and [dlg2.result[i]["title"] for i in (1, 2, 3)] == ["Story Song", "Melody", "Story Song"]

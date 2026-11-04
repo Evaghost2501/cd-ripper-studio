@@ -91,7 +91,8 @@ class ImageView(QLabel):
 
 
 class OcrDialog(QDialog):
-    def __init__(self, parent, n_tracks: int, camera_index: int = 0, engine: str = "auto", lang: str = "ko"):
+    def __init__(self, parent, n_tracks: int, camera_index: int = 0, engine: str = "auto", lang: str = "ko",
+                 presets: list[str] | None = None, on_presets_edited=None):
         super().__init__(parent)
         self.setWindowTitle("웹캠으로 트랙 목록 인식")
         fit_to_screen(self, 1250, 760)
@@ -151,6 +152,13 @@ class OcrDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.verticalHeader().hide()
         rl.addWidget(self.table, 3)
+        # backup when recognition is poor: pick common titles with one click
+        from .widgets import TitlePresetBar
+        self.title_bar = TitlePresetBar(presets if presets is not None else [])
+        self.title_bar.chosen.connect(self._quick_title)
+        if on_presets_edited:
+            self.title_bar.edited.connect(on_presets_edited)
+        rl.addWidget(self.title_bar)
         split.addWidget(right)
         split.setSizes([700, 550])
 
@@ -291,8 +299,37 @@ class OcrDialog(QDialog):
                 self.table.setItem(r, c, it)
         self.table.blockSignals(False)
 
+    def _quick_title(self, title):
+        from .widgets import apply_title_to_table
+        if self.table.rowCount() == 0:
+            self.table.setRowCount(1)          # no CD and no text yet: start a list by hand
+            self.reparse_keep()
+        if not self.table.selectedIndexes() and self.table.currentRow() < 0:
+            self.table.selectRow(0)
+        rows = apply_title_to_table(self.table, 1, title)
+        if not self.fixed_count and rows and rows[-1] == self.table.rowCount() - 1:
+            self.table.setRowCount(self.table.rowCount() + 1)   # no CD yet: keep adding tracks
+            self.reparse_keep()
+            self.table.selectRow(rows[-1] + 1)
+            self.n_tracks = self.table.rowCount() - 1             # the empty new row is not a track yet
+        self.table.setFocus()
+
+    def reparse_keep(self):
+        for r in range(self.table.rowCount()):
+            for c, v in enumerate((str(r + 1), "", "")):
+                if self.table.item(r, c) is None:
+                    it = QTableWidgetItem(v)
+                    if c == 0:
+                        it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                    self.table.setItem(r, c, it)
+        self.n_tracks = max(self.n_tracks, self.table.rowCount())
+
     def _accept(self):
         self.result = {}
+        if not self.fixed_count:      # count = last row that has something in it
+            filled = [r for r in range(self.table.rowCount())
+                      if self.table.item(r, 1) and self.table.item(r, 1).text().strip()]
+            self.n_tracks = (filled[-1] + 1) if filled else 0
         for r in range(self.n_tracks):
             title = self.table.item(r, 1).text().strip()
             artist = self.table.item(r, 2).text().strip()

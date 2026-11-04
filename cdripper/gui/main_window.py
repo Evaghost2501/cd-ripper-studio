@@ -27,6 +27,7 @@ from .ocr_dialog import OcrDialog
 from .search_dialog import SearchDialog
 from .settings_dialog import SettingsDialog
 from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async, ui_scale
+from .widgets import TitlePresetBar, apply_title_to_table
 
 COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
         ("lyricist", "작사"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
@@ -227,6 +228,16 @@ class MainWindow(QMainWindow):
             e = QLineEdit()
             e.textEdited.connect(lambda v, k=key: self._album_edited(k, v))
             self.album_edits[key] = e
+            if key == "label":           # short box + one-click presets (e.g. JYbooks)
+                row = QHBoxLayout()
+                row.addWidget(e, 1)
+                for name in self.s.label_presets:
+                    b = QPushButton(name)
+                    b.setToolTip(f"레이블에 '{name}' 입력")
+                    b.clicked.connect(lambda _=False, n=name: self._set_label(n))
+                    row.addWidget(b)
+                form.addRow(label, row)
+                continue
             form.addRow(label, e)
         self.album_edits["date"].setPlaceholderText("YYYY 또는 YYYY-MM-DD")
         self.compilation = QCheckBox("컴필레이션 (여러 아티스트)")
@@ -273,6 +284,10 @@ class MainWindow(QMainWindow):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._table_menu)
         rl.addWidget(self.table, 1)
+        self.title_bar = TitlePresetBar(self.s.title_presets)
+        self.title_bar.chosen.connect(self._quick_title)
+        self.title_bar.edited.connect(self._title_presets_edited)
+        rl.addWidget(self.title_bar)
         sel = QHBoxLayout()
         for text, val in (("모두 선택", True), ("모두 해제", False)):
             b = QPushButton(text)
@@ -450,6 +465,24 @@ class MainWindow(QMainWindow):
                 self.table.item(r, COL["status"]).setText(keep["track_status"][t.number])
 
     # ================================================================ genre / folders
+    def _quick_title(self, title):
+        if not self.album.tracks:
+            return
+        if not self.table.selectedIndexes() and self.table.currentRow() < 0:
+            self.table.selectRow(0)
+        rows = apply_title_to_table(self.table, COL["title"], title)
+        self.table.setFocus()
+        if not rows:
+            self.log("제목을 넣을 트랙을 먼저 선택하세요.")
+
+    def _title_presets_edited(self, presets):
+        self.s.title_presets = presets
+        self._save_soon()
+
+    def _set_label(self, name):
+        self.album_edits["label"].setText(name)
+        self._album_edited("label", name)
+
     def _genre_chosen(self, name):
         self.album.genre = name
         self.s.genre = name          # becomes the default for the next CD
@@ -707,8 +740,14 @@ class MainWindow(QMainWindow):
         self._open_search()
 
     def _open_search(self):
-        dlg = SearchDialog(self, self.album.albumartist, self.album.album, self.toc, self.s.store_country)
-        if dlg.exec() and dlg.selected:
+        dlg = SearchDialog(self, self.album.albumartist, self.album.album, self.toc, self.s.store_country,
+                           genre=self.album.genre, sources=self.s.search_sources or None)
+        ok = dlg.exec()
+        chosen = [n for n, cb in dlg.src.items() if cb.isChecked()]
+        if chosen != self.s.search_sources:
+            self.s.search_sources = chosen
+            self._save_soon()
+        if ok and dlg.selected:
             replace = QMessageBox.question(
                 self, "적용 방식", "기존에 입력한 값을 모두 덮어쓸까요?\n\n예: 검색 결과로 전부 교체\n"
                                    "아니요: 검색 결과에 있는 값만 갱신 (빈 값은 기존 유지)",
@@ -717,8 +756,11 @@ class MainWindow(QMainWindow):
 
     def ocr_tracks(self):
         n = len(self.album.tracks)      # 0 = no CD yet → track count follows the recognised list
-        dlg = OcrDialog(self, n, self.s.camera_index, self.s.ocr_engine, self.s.ocr_lang)
-        if dlg.exec():
+        dlg = OcrDialog(self, n, self.s.camera_index, self.s.ocr_engine, self.s.ocr_lang,
+                        presets=self.s.title_presets, on_presets_edited=self._title_presets_edited)
+        ok = dlg.exec()
+        self.title_bar.set_presets(self.s.title_presets)      # may have been edited in the dialog
+        if ok:
             self.s.camera_index = dlg.cam_combo.currentData()
             if not self.album.tracks:
                 self._ensure_tracks(dlg.n_tracks)
@@ -753,12 +795,8 @@ class MainWindow(QMainWindow):
 
     def find_cover(self):
         dlg = CoverDialog(self, self.album.albumartist, self.album.album, self.album.mb_release_id,
-                          self.s.store_country, self.s.cover_music_sources)
-        ok = dlg.exec()
-        if dlg.music.isChecked() != self.s.cover_music_sources:
-            self.s.cover_music_sources = dlg.music.isChecked()
-            self._save_soon()
-        if ok and dlg.result:
+                          self.s.store_country)
+        if dlg.exec() and dlg.result:
             self.set_cover(dlg.result)
 
     def cover_from_file(self):

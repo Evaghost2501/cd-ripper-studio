@@ -38,6 +38,12 @@ def main():
 
     from .gui.main_window import MainWindow
 
+    from PySide6.QtCore import QCoreApplication, Qt
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)   # required by the embedded browser
+    try:
+        import PySide6.QtWebEngineWidgets  # noqa: F401  (must be loaded before QApplication)
+    except ImportError:
+        pass
     app = QApplication(sys.argv)
     app.setApplicationName("CD Ripper Studio")
     app.setStyle("Fusion")

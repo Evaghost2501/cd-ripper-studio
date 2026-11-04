@@ -34,6 +34,9 @@ def _get(url, params=None, timeout=15, mb=False):
 
 
 def _short(e: Exception) -> str:
+    from .books import BlockedError
+    if isinstance(e, BlockedError):
+        return str(e)
     if isinstance(e, requests.Timeout):
         return "시간 초과"
     if isinstance(e, requests.ConnectionError):
@@ -219,13 +222,20 @@ def complete(a: AlbumMeta, toc: Toc | None = None) -> AlbumMeta:
     return a
 
 
-def search_all(artist: str, album: str, sources=("MusicBrainz", "iTunes", "Deezer"), country="KR",
+CD_SOURCES = ("MusicBrainz", "iTunes", "Deezer")
+BOOK_SOURCES = ("Yes24", "Amazon", "Google Books")
+
+
+def search_all(artist: str, album: str, sources=CD_SOURCES + BOOK_SOURCES, country="KR",
                errors: list | None = None) -> list[AlbumMeta]:
     term = f"{artist} {album}".strip()
     results: list[AlbumMeta] = []
+    from . import books
     jobs = {"MusicBrainz": lambda: mb_search(artist, album),
             "iTunes": lambda: itunes_search(term, country),
             "Deezer": lambda: deezer_search(term)}
+    for name, fn in books.SEARCHERS.items():          # Yes24 / Amazon / Google Books (audiobooks)
+        jobs[name] = (lambda fn=fn: fn(session, term))
     threads, buckets = [], {}
 
     def run(name):
@@ -356,7 +366,10 @@ def google_image_search(query: str, limit: int = 40) -> list[CoverCandidate]:
     return res
 
 
-def download(url: str, timeout: int = 20) -> bytes:
-    r = session.get(url, timeout=timeout)
+def download(url: str, timeout: int = 20, headers: dict | None = None) -> bytes:
+    """Fetch a file. Uses browser-like headers: several image hosts refuse unknown clients."""
+    from .books import BROWSER_HEADERS
+    h = {**BROWSER_HEADERS, "Accept": "image/avif,image/webp,image/*,*/*;q=0.8", **(headers or {})}
+    r = session.get(url, timeout=timeout, headers=h)
     r.raise_for_status()
     return r.content
