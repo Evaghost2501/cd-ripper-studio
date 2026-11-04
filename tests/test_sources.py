@@ -56,3 +56,10 @@ def test_itunes_and_deezer(monkeypatch):
     assert [t.title for t in full.tracks] == ["A", "B"]
     dz = web.complete(next(a for a in res if a.source == "Deezer"))
     assert dz.label == "LOEN" and dz.tracks[0].isrc == "K1"
+
+
+def test_google_query_is_exactly_user_input():
+    from urllib.parse import parse_qs, urlparse
+    q = parse_qs(urlparse(web.google_images_url("아이유", "Palette")).query)["q"][0]
+    assert q == "아이유 Palette"
+    assert parse_qs(urlparse(web.google_images_url("", "my photo")).query)["q"][0] == "my photo"

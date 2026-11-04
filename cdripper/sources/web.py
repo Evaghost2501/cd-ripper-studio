@@ -297,7 +297,9 @@ def cover_search(artist: str, album: str, mbid: str = "", country: str = "KR",
 
 
 def google_images_url(artist: str, album: str) -> str:
-    return "https://www.google.com/search?tbm=isch&tbs=isz:l&q=" + quote_plus(f"{artist} {album} album cover")
+    """Google Images search with exactly what the user typed (nothing appended)."""
+    query = " ".join(x.strip() for x in (artist, album) if x.strip())
+    return "https://www.google.com/search?tbm=isch&tbs=isz:l&q=" + quote_plus(query)
 
 
 def download(url: str, timeout: int = 20) -> bytes:
