@@ -33,6 +33,7 @@ class Settings:
     accuraterip: bool = True
     eject_when_done: bool = True
     auto_lookup: bool = True
+    auto_fill_tracks: bool = True        # album artist / genre / comment typed → copied to tracks
     store_country: str = "KR"
     ffmpeg_path: str = ""
     ocr_engine: str = "auto"

@@ -6,7 +6,7 @@ import os
 import re
 
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
@@ -186,6 +186,12 @@ class MainWindow(QMainWindow):
         self.compilation = QCheckBox("컴필레이션 (여러 아티스트)")
         self.compilation.toggled.connect(self._compilation_toggled)
         form.addRow(self.compilation)
+        self.auto_fill = QCheckBox("앨범 정보를 트랙에 자동 반영 (아티스트·장르·코멘트)")
+        self.auto_fill.setToolTip("앨범 아티스트·장르·코멘트를 입력하면 바로 모든 트랙에 들어갑니다.\n"
+                                  "트랙에 따로 입력한 다른 값(예: feat. 아티스트)은 그대로 둡니다.")
+        self.auto_fill.setChecked(self.s.auto_fill_tracks)
+        self.auto_fill.toggled.connect(self._auto_fill_toggled)
+        form.addRow(self.auto_fill)
         self.disc_info = QLabel()
         self.disc_info.setStyleSheet("color:#777")
         self.disc_info.setWordWrap(True)
@@ -220,7 +226,16 @@ class MainWindow(QMainWindow):
             b = QPushButton(text)
             b.clicked.connect(lambda _=False, v=val: self._set_all_rip(v))
             sel.addWidget(b)
-        hint = QLabel("셀을 더블클릭해 수정 · '#' 더블클릭: 가사/코멘트 등 상세 · 우클릭: 일괄 편집")
+        b = QPushButton("🗑 선택 트랙 삭제")
+        b.setToolTip("선택한 트랙을 목록에서 뺍니다 (Delete 키). 리핑되지 않습니다.")
+        b.clicked.connect(self.delete_tracks)
+        sel.addWidget(b)
+        self.restore_btn = QPushButton("↺ 삭제한 트랙 복원")
+        self.restore_btn.clicked.connect(self.restore_tracks)
+        self.restore_btn.setEnabled(False)
+        sel.addWidget(self.restore_btn)
+        QShortcut(QKeySequence.Delete, self.table, self.delete_tracks, context=Qt.WidgetShortcut)
+        hint = QLabel("더블클릭: 수정 · '#' 더블클릭: 가사/코멘트 · 우클릭: 일괄 편집")
         hint.setStyleSheet("color:#777")
         sel.addWidget(hint)
         sel.addStretch()
@@ -245,18 +260,25 @@ class MainWindow(QMainWindow):
         r2 = QHBoxLayout()
         self.outdir = QLineEdit(self.s.output_dir)
         self.outdir.editingFinished.connect(self._outdir_changed)
-        b = QPushButton("찾아보기…")
+        b = QPushButton("📁 폴더 선택…")
+        b.setToolTip("저장 폴더를 고릅니다. 한 번 정하면 다음 실행 때도 이 폴더가 기본값입니다.")
         b.clicked.connect(self._browse_outdir)
-        r2.addWidget(self.outdir, 1); r2.addWidget(b)
+        b_open = QPushButton("열기")
+        b_open.clicked.connect(lambda: (os.makedirs(self.s.output_dir, exist_ok=True),
+                                        QDesktopServices.openUrl(QUrl.fromLocalFile(self.s.output_dir))))
+        r2.addWidget(self.outdir, 1); r2.addWidget(b); r2.addWidget(b_open)
         ol.addRow("저장 폴더", r2)
         r3 = QHBoxLayout()
         self.tpl = QComboBox(editable=True)
         self.tpl.addItems(naming.PRESETS)
         self.tpl.setEditText(self.s.template)
         self.tpl.editTextChanged.connect(self._tpl_changed)
+        b_reset = QPushButton("기본값")
+        b_reset.setToolTip("파일 이름 규칙을 처음 기본값으로 되돌립니다")
+        b_reset.clicked.connect(lambda: self.tpl.setEditText(Settings.template))
         tb_help = QPushButton("필드 목록")
         tb_help.clicked.connect(self._tpl_help)
-        r3.addWidget(self.tpl, 1); r3.addWidget(tb_help)
+        r3.addWidget(self.tpl, 1); r3.addWidget(b_reset); r3.addWidget(tb_help)
         ol.addRow("파일 이름 규칙", r3)
         self.preview = QLabel()
         self.preview.setStyleSheet("color:#1565c0")
@@ -581,11 +603,34 @@ class MainWindow(QMainWindow):
                         it.setToolTip(f"비어 있으면 앨범 아티스트 '{self.album.albumartist}' 사용")
                 self.table.setItem(r, COL[key], it)
         self.table.blockSignals(False)
+        self.restore_btn.setEnabled(bool(self._deleted_numbers()))
         self._update_preview()
 
+    # album field → track field copied when "자동 반영" is on
+    AUTO_FILL = {"albumartist": "artist", "genre": "genre", "comment": "comment"}
+
     def _album_edited(self, key, value):
+        old = getattr(self.album, key)
         setattr(self.album, key, value.strip())
+        tf = self.AUTO_FILL.get(key)
+        if tf and self.auto_fill.isChecked():
+            # overwrite only tracks that were empty or still had the previous album value
+            for t in self.album.tracks:
+                if getattr(t, tf) in ("", old):
+                    setattr(t, tf, value.strip())
+            self.refresh_tracks()
         self._update_preview()
+
+    def _auto_fill_toggled(self, on):
+        self.s.auto_fill_tracks = on
+        self._save_soon()
+        if on:   # fill empty track fields right away
+            for af, tf in self.AUTO_FILL.items():
+                val = getattr(self.album, af)
+                for t in self.album.tracks:
+                    if val and not getattr(t, tf):
+                        setattr(t, tf, val)
+            self.refresh_tracks()
 
     def _compilation_toggled(self, v):
         self.album.compilation = v
@@ -623,7 +668,41 @@ class MainWindow(QMainWindow):
         m.addAction("상세 정보 (가사/코멘트)…", lambda: self._cell_dbl(self.table.currentRow(), COL["number"]))
         m.addSeparator()
         m.addAction("선택 트랙만 리핑", lambda: self._rip_only_selected())
+        m.addAction("선택 트랙 삭제 (Delete)", self.delete_tracks)
+        if self._deleted_numbers():
+            m.addAction("삭제한 트랙 복원", self.restore_tracks)
         m.exec(self.table.viewport().mapToGlobal(pos))
+
+    def delete_tracks(self):
+        if self._busy():
+            return
+        rows = set(self.selected_rows())
+        if not rows:
+            return
+        nums = [self.album.tracks[r].number for r in sorted(rows)]
+        self.album.tracks = [t for i, t in enumerate(self.album.tracks) if i not in rows]
+        self.refresh_tracks()
+        self.log(f"트랙 {', '.join(f'{n:02d}' for n in nums)} 삭제 (‘삭제한 트랙 복원’으로 되돌릴 수 있습니다)")
+
+    def _deleted_numbers(self) -> list[int]:
+        if not self.toc:
+            return []
+        have = {t.number for t in self.album.tracks}
+        return [t.number for t in self.toc.audio_tracks if t.number not in have]
+
+    def restore_tracks(self):
+        if self._busy():
+            return
+        missing = self._deleted_numbers()
+        for n in missing:
+            t = TrackMeta(n, length=self.toc.track(n).length)
+            if self.auto_fill.isChecked():
+                t.artist, t.genre, t.comment = self.album.albumartist, self.album.genre, self.album.comment
+            self.album.tracks.append(t)
+        self.album.tracks.sort(key=lambda t: t.number)
+        self.refresh_tracks()
+        if missing:
+            self.log(f"트랙 {', '.join(f'{n:02d}' for n in missing)} 복원")
 
     def _rip_only_selected(self):
         rows = set(self.selected_rows())
@@ -737,14 +816,28 @@ class MainWindow(QMainWindow):
             note = "⚠ ffmpeg.exe가 필요합니다 (exe 옆에 두거나 설정에서 지정). " + note
         self.fmt_note.setText(note)
         self.s.format = key
+        self._save_soon()
         self.s.quality = self.quality.currentData()
         self._update_preview()
 
     def _quality_changed(self):
         self.s.quality = self.quality.currentData()
+        self._save_soon()
+
+    def _save_soon(self):
+        """Persist settings shortly after a change (debounced) so they become the new defaults."""
+        if not hasattr(self, "_save_timer"):
+            self._save_timer = QTimer(self, singleShot=True, interval=600, timeout=self.s.save)
+        self._save_timer.start()
 
     def _outdir_changed(self):
-        self.s.output_dir = self.outdir.text().strip()
+        path = self.outdir.text().strip()
+        if not path:
+            self.outdir.setText(self.s.output_dir)
+            return
+        self.s.output_dir = os.path.normpath(path)
+        self.outdir.setText(self.s.output_dir)
+        self._save_soon()
         self._update_preview()
 
     def _browse_outdir(self):
@@ -754,7 +847,10 @@ class MainWindow(QMainWindow):
             self._outdir_changed()
 
     def _tpl_changed(self, text):
-        self.s.template = text
+        if not text.strip():
+            return
+        self.s.template = text.strip()
+        self._save_soon()
         self._update_preview()
 
     def _tpl_help(self):
