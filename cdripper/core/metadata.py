@@ -4,25 +4,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, asdict
 
 ALBUM_FIELDS = [
-    # key, Korean label
-    ("albumartist", "앨범 아티스트"),
+    # key, Korean label — in the order shown in the album panel
     ("album", "앨범"),
+    ("albumartist", "앨범 아티스트"),
+    ("label", "레이블"),
+    ("genre", "장르"),            # chosen with buttons (GENRES), not typed
     ("date", "발매일/연도"),
-    ("genre", "장르"),
     ("disc", "디스크 번호"),
     ("totaldiscs", "총 디스크 수"),
-    ("label", "레이블"),
-    ("catalog", "카탈로그 번호"),
-    ("barcode", "바코드"),
     ("comment", "코멘트"),
 ]
+
+GENRES = ["Music", "Audiobook"]
 
 TRACK_FIELDS = [
     ("title", "제목"),
     ("artist", "아티스트"),
     ("composer", "작곡"),
     ("lyricist", "작사"),
-    ("genre", "장르"),
     ("isrc", "ISRC"),
     ("comment", "코멘트"),
 ]
@@ -95,10 +94,9 @@ def track_values(album: AlbumMeta, track: TrackMeta) -> dict:
         "totaldiscs": int(album.totaldiscs) if str(album.totaldiscs).isdigit() else 1,
         "date": album.date,
         "year": album.year,
-        "genre": track.genre or album.genre,
+        "genre": album.genre,                 # genre is album-level only (Music / Audiobook)
         "composer": track.composer,
         "lyricist": track.lyricist,
         "label": album.label,
-        "catalog": album.catalog,
         "isrc": track.isrc,
     }

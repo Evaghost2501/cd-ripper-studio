@@ -13,11 +13,14 @@ from __future__ import annotations
 import re
 
 PRESETS = [
+    # file name only (the album sub-folder option adds the folder)
+    "{track:02}. {title}",
+    "{track:02} - {title}",
+    "{track:02}. {artist} - {title}",
+    "{disc}-{track:02} {title}",
+    # with folders of their own
     "{albumartist}/{album}/{track:02} - {title}",
     "{albumartist}/[{year} - ]{album}/{track:02}. {title}",
-    "{albumartist} - {album}/{track:02} - {artist} - {title}",
-    "{albumartist}/{album} ({year})/{disc}-{track:02} {title}",
-    "{album}/{track:02} {title}",
 ]
 
 FIELDS_HELP = [
@@ -25,7 +28,6 @@ FIELDS_HELP = [
     ("{album}", "앨범"), ("{track:02}", "트랙 번호(2자리)"), ("{totaltracks}", "총 트랙 수"),
     ("{disc}", "디스크 번호"), ("{totaldiscs}", "총 디스크 수"), ("{year}", "연도"),
     ("{date}", "발매일"), ("{genre}", "장르"), ("{composer}", "작곡가"), ("{label}", "레이블"),
-    ("{catalog}", "카탈로그 번호"),
 ]
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')

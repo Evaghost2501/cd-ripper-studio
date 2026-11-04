@@ -49,10 +49,7 @@ class RipJob:
         self._cancel = True
 
     def output_path(self, track, fmt: str | None = None) -> str:
-        fmt = fmt or self.s.format
-        tpl = self.s.various_template if self.album.compilation else self.s.template
-        rel = naming.render(tpl, track_values(self.album, track))
-        return os.path.join(self.s.output_dir, *rel.split("/")) + encoders.FORMAT_BY_KEY[fmt].ext
+        return output_path(self.s, self.album, track, fmt)
 
     def run(self) -> JobReport:
         s, album = self.s, self.album
@@ -201,6 +198,16 @@ class RipJob:
         if report.cancelled:
             out.append("※ 취소됨")
         return "\n".join(out) + "\n"
+
+
+def output_path(s: Settings, album: AlbumMeta, track, fmt: str | None = None) -> str:
+    """<저장 폴더>/[<앨범 이름>/]<파일 이름 규칙>.<확장자>"""
+    fmt = fmt or s.format
+    tpl = s.various_template if album.compilation else s.template
+    rel = naming.render(tpl, track_values(album, track))
+    if s.album_folder:
+        rel = naming.sanitize(album.album.strip() or "앨범 이름 없음") + "/" + rel
+    return os.path.join(s.output_dir, *rel.split("/")) + encoders.FORMAT_BY_KEY[fmt].ext
 
 
 def ar_text(r: TrackReport) -> str:

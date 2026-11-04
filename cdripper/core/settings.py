@@ -16,8 +16,10 @@ def config_dir() -> str:
 @dataclass
 class Settings:
     output_dir: str = os.path.join(os.path.expanduser("~"), "Music", "CD Rips")
-    template: str = "{albumartist}/[{year} - ]{album}/{track:02}. {title}"
-    various_template: str = "Various Artists/[{year} - ]{album}/{track:02}. {artist} - {title}"
+    album_folder: bool = True            # put each album in <저장 폴더>/<앨범 이름>/
+    template: str = "{track:02}. {title}"
+    various_template: str = "{track:02}. {artist} - {title}"
+    genre: str = "Music"                 # last chosen genre button = default for the next CD
     format: str = "mp3"
     quality: str = "cbr320"
     extra_flac: bool = False             # also produce a FLAC archive copy
@@ -51,6 +53,11 @@ class Settings:
             with open(p, encoding="utf-8") as f:
                 d = json.load(f)
             names = {f.name for f in fields(cls)}
+            # old defaults already contained the album folder; the album-folder option does that now
+            if d.get("template") == "{albumartist}/[{year} - ]{album}/{track:02}. {title}":
+                d["template"] = cls.template
+            if d.get("various_template") == "Various Artists/[{year} - ]{album}/{track:02}. {artist} - {title}":
+                d["various_template"] = cls.various_template
             return cls(**{k: v for k, v in d.items() if k in names})
         except (OSError, ValueError, TypeError):
             return cls()

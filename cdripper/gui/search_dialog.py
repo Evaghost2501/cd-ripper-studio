@@ -148,7 +148,7 @@ class SearchDialog(QDialog):
             for t in full.tracks:
                 extra = f"  — {t.artist}" if t.artist and t.artist != full.albumartist else ""
                 self.tracks.addItem(f"{t.number:02d}. {t.title}{extra}")
-            info = [x for x in (full.label, full.catalog, full.genre) if x]
+            info = [x for x in (full.label, full.date) if x]
             if info:
                 self.tracks.addItem("")
                 self.tracks.addItem(" · ".join(info))

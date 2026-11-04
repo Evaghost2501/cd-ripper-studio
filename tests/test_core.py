@@ -130,7 +130,8 @@ def test_full_rip_job(tmp_path, fmt, quality):
         assert str(f.tags["TIT2"]) == "Song 1" and str(f.tags["TRCK"]) == "1/4"
         apic = f.tags.getall("APIC")[0]
         assert QImage.fromData(apic.data).width() == 1000       # resized for embedding
-        assert os.path.exists(os.path.join(tmp_path, "_FLAC", "Test Artist", "2024 - Test： Album", "01. Song 1.flac"))
+        assert os.path.exists(os.path.join(tmp_path, "_FLAC", "Test： Album", "01. Song 1.flac"))
+        assert rep.tracks[0].path == os.path.join(tmp_path, "Test： Album", "01. Song 1.mp3")
     if fmt == "flac":
         assert f["TITLE"] == ["Song 1"] and f.pictures
         import soundfile as sf

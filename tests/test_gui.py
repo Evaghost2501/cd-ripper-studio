@@ -31,11 +31,11 @@ def test_auto_fill_tracks(win):
     assert [t.artist for t in w.album.tracks] == ["아이유", "Guest", "아이유", "아이유"]
     w._album_edited("albumartist", "IU")                # follows edits, keeps custom value
     assert [t.artist for t in w.album.tracks] == ["IU", "Guest", "IU", "IU"]
-    w._album_edited("genre", "K-Pop")
-    assert all(t.genre == "K-Pop" for t in w.album.tracks)
+    w._album_edited("comment", "CD rip")
+    assert all(t.comment == "CD rip" for t in w.album.tracks)
     w.auto_fill.setChecked(False)
-    w._album_edited("genre", "Ballad")
-    assert all(t.genre == "K-Pop" for t in w.album.tracks)
+    w._album_edited("comment", "other")
+    assert all(t.comment == "CD rip" for t in w.album.tracks)
 
 
 def test_delete_and_restore(win):
@@ -108,3 +108,62 @@ def test_ocr_dialog_without_cd_counts_tracks():
     assert dlg.table.rowCount() == 5
     dlg._accept()
     assert dlg.n_tracks == 5 and dlg.result[5]["title"] == "E"
+
+
+def test_album_form_order_and_removed_fields(win):
+    w, app, _ = win
+    from PySide6.QtWidgets import QFormLayout, QLabel
+    form = w.album_edits["album"].parentWidget().layout()
+    labels = [form.itemAt(i, QFormLayout.LabelRole).widget().text() for i in range(4)]
+    assert labels == ["앨범", "앨범 아티스트", "레이블", "장르"]
+    assert "catalog" not in w.album_edits and "barcode" not in w.album_edits
+    assert "genre" not in w.album_edits                       # buttons only, no typing
+
+
+def test_genre_buttons(win, tmp_path):
+    w, app, tmp = win
+    assert w.album.genre == "Music" and w.genre_btns["Music"].isChecked()   # default
+    w.genre_btns["Audiobook"].click()
+    assert w.album.genre == "Audiobook" and not w.genre_btns["Music"].isChecked()
+    assert w.s.genre == "Audiobook"                            # default for the next CD
+    from cdripper.core.metadata import AlbumMeta
+    w.apply_album(AlbumMeta(album="X", genre="K-Pop"))        # web genres are ignored
+    assert w.album.genre == "Audiobook"
+    w.eject()
+    w._disc_loaded((w.drive().read_toc(), {}))
+    w.album = type(w.album)(genre=w.s.genre); w.refresh_all()
+    assert w.genre_btns["Audiobook"].isChecked()
+
+
+def test_album_subfolder_option(win):
+    w, app, tmp = win
+    w.outdir.setText(str(tmp / "Out")); w._outdir_changed()
+    w.album_edits["album"].setText("Palette"); w._album_edited("album", "Palette")
+    w.tpl.setEditText("{track:02}. {title}")
+    assert w.album_folder.isChecked()                          # default on
+    assert w.preview.text() == os.path.join(str(tmp / "Out"), "Palette", "01. Track 01.mp3")
+    w.album_folder.setChecked(False)
+    assert w.preview.text() == os.path.join(str(tmp / "Out"), "01. Track 01.mp3")
+    assert w.s.album_folder is False
+
+
+def test_ui_size_slider_live(win):
+    w, app, _ = win
+    w.set_ui_size(12)
+    app.processEvents()
+    assert app.font().pointSize() == 12 and w.s.font_pt == 12
+    small = w.rip_btn.minimumHeight()
+    w.set_ui_size(24)
+    app.processEvents()
+    assert w.rip_btn.minimumHeight() > small                  # sizes follow the font
+    w.set_ui_size(9)
+    app.processEvents()
+
+
+def test_old_default_template_migrates(tmp_path, monkeypatch):
+    import json
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    from cdripper.core.settings import Settings, config_dir
+    with open(os.path.join(config_dir(), "settings.json"), "w") as f:
+        json.dump({"template": "{albumartist}/[{year} - ]{album}/{track:02}. {title}"}, f)
+    assert Settings.load().template == "{track:02}. {title}"

@@ -7,17 +7,18 @@ import re
 
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
+                               QButtonGroup, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
+                               QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
                                QWidget)
 
 from .. import __version__
 from ..core import encoders, naming, ocr
 from ..core.drive import BaseDrive, DriveError, list_drives
-from ..core.job import JobReport, RipJob, TrackReport, ar_text
-from ..core.metadata import ALBUM_FIELDS, AlbumMeta, TrackMeta, track_values
+from ..core.job import JobReport, RipJob, TrackReport, ar_text, output_path
+from ..core.metadata import ALBUM_FIELDS, GENRES, AlbumMeta, TrackMeta, track_values
 from ..core.settings import Settings, config_dir
 from ..core.toc import Toc, fmt_duration
 from ..sources import web
@@ -28,9 +29,9 @@ from .settings_dialog import SettingsDialog
 from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async
 
 COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
-        ("lyricist", "작사"), ("genre", "장르"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
+        ("lyricist", "작사"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
 COL = {k: i for i, (k, _) in enumerate(COLS)}
-EDITABLE = {"title", "artist", "composer", "lyricist", "genre", "isrc"}
+EDITABLE = {"title", "artist", "composer", "lyricist", "isrc"}
 
 
 class RipThread(QThread):
@@ -61,7 +62,7 @@ class TrackDetailDialog(QDialog):
         f = QFormLayout(self)
         self.edits = {}
         for key, label in (("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"), ("lyricist", "작사"),
-                           ("genre", "장르"), ("isrc", "ISRC"), ("comment", "코멘트")):
+                           ("isrc", "ISRC"), ("comment", "코멘트")):
             e = QLineEdit(getattr(t, key))
             self.edits[key] = e
             f.addRow(label, e)
@@ -86,7 +87,7 @@ class MainWindow(QMainWindow):
         self.s = Settings.load()
         self.drives: list[BaseDrive] = []
         self.toc: Toc | None = None
-        self.album = AlbumMeta()
+        self.album = AlbumMeta(genre=self.s.genre)
         self.cover: bytes | None = None
         self.rip_thread: RipThread | None = None
         self._media = None
@@ -103,7 +104,7 @@ class MainWindow(QMainWindow):
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.addToolBar(tb)
         tb.addWidget(QLabel(" 드라이브 "))
-        self.drive_combo = QComboBox(minimumWidth=px(200))
+        self.drive_combo = QComboBox()
         self.drive_combo.currentIndexChanged.connect(lambda *_: self.load_disc())
         tb.addWidget(self.drive_combo)
 
@@ -124,6 +125,20 @@ class MainWindow(QMainWindow):
         act("📷 웹캠 인식", self.ocr_tracks, "CD 뒷면을 웹캠으로 찍어 트랙 제목 인식 (Ctrl+K)", "Ctrl+K")
         tb.addSeparator()
         act("⚙ 설정", self.open_settings)
+        tb.addSeparator()
+        tb.addWidget(QLabel(" UI 크기 "))
+        self.ui_slider = QSlider(Qt.Horizontal)
+        self.ui_slider.setRange(8, 28)
+        self.ui_slider.setPageStep(2)
+        self.ui_slider.setValue(max(8, min(28, self.s.font_pt)))
+        self.ui_slider.setToolTip("글자와 화면 요소 크기 (원래 크기 = 9)")
+        self.ui_size_lbl = QLabel()
+        tb.addWidget(self.ui_slider)
+        tb.addWidget(self.ui_size_lbl)
+        self._font_timer = QTimer(self, singleShot=True, interval=250,
+                                  timeout=lambda: self.set_ui_size(self.ui_slider.value()))
+        self.ui_slider.valueChanged.connect(self._ui_slider_moved)
+        self._ui_slider_moved(self.ui_slider.value(), apply=False)
 
         # menu
         m = self.menuBar().addMenu("파일")
@@ -163,8 +178,7 @@ class MainWindow(QMainWindow):
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QScrollArea.NoFrame)
-        left_scroll.setMinimumWidth(px(260))
-        left_scroll.setMaximumWidth(px(400))
+        self.left_scroll = left_scroll
         self.cover_lbl = QLabel("커버 없음\n끌어다 놓기", alignment=Qt.AlignCenter)
         self.cover_lbl.setFixedSize(170, 170)
         self.cover_lbl.setStyleSheet("border:1px dashed #999; color:#888;")
@@ -192,6 +206,18 @@ class MainWindow(QMainWindow):
         form = QFormLayout(g)
         self.album_edits: dict[str, QLineEdit] = {}
         for key, label in ALBUM_FIELDS:
+            if key == "genre":           # chosen with buttons only
+                row = QHBoxLayout()
+                self.genre_group = QButtonGroup(self)
+                self.genre_btns = {}
+                for gname, glabel in (("Music", "🎵 Music"), ("Audiobook", "📖 Audiobook")):
+                    b = QPushButton(glabel, checkable=True)
+                    self.genre_group.addButton(b)
+                    self.genre_btns[gname] = b
+                    b.clicked.connect(lambda _=False, gn=gname: self._genre_chosen(gn))
+                    row.addWidget(b)
+                form.addRow(label, row)
+                continue
             e = QLineEdit()
             e.textEdited.connect(lambda v, k=key: self._album_edited(k, v))
             self.album_edits[key] = e
@@ -200,8 +226,8 @@ class MainWindow(QMainWindow):
         self.compilation = QCheckBox("컴필레이션 (여러 아티스트)")
         self.compilation.toggled.connect(self._compilation_toggled)
         form.addRow(self.compilation)
-        self.auto_fill = QCheckBox("앨범 정보를 트랙에 자동 반영 (아티스트·장르·코멘트)")
-        self.auto_fill.setToolTip("앨범 아티스트·장르·코멘트를 입력하면 바로 모든 트랙에 들어갑니다.\n"
+        self.auto_fill = QCheckBox("앨범 정보를 트랙에 자동 반영 (아티스트·코멘트)")
+        self.auto_fill.setToolTip("앨범 아티스트·코멘트를 입력하면 바로 모든 트랙에 들어갑니다.\n"
                                   "트랙에 따로 입력한 다른 값(예: feat. 아티스트)은 그대로 둡니다.")
         self.auto_fill.setChecked(self.s.auto_fill_tracks)
         self.auto_fill.toggled.connect(self._auto_fill_toggled)
@@ -229,10 +255,6 @@ class MainWindow(QMainWindow):
         # title and artist share the free space; the rest stay compact
         hh.setSectionResizeMode(COL["title"], QHeaderView.Stretch)
         hh.setSectionResizeMode(COL["artist"], QHeaderView.Stretch)
-        for k, w in (("rip", 30), ("number", 34), ("artist", 130), ("composer", 80), ("lyricist", 70),
-                     ("genre", 60), ("isrc", 95), ("length", 46), ("status", 110)):
-            self.table.setColumnWidth(COL[k], px(w))
-        hh.setMinimumSectionSize(px(28))
         # less-used columns hidden by default; right-click the header to show/hide (choice is remembered)
         for k in self.s.hidden_columns:
             if k in COL:
@@ -266,8 +288,7 @@ class MainWindow(QMainWindow):
         split.addWidget(right)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
-        split.setSizes([px(300), px(1000)])
-        right.setMinimumHeight(px(110))
+        self.split, self.right = split, right
 
         # ---- output panel ------------------------------------------------
         og = QGroupBox("출력")
@@ -295,6 +316,10 @@ class MainWindow(QMainWindow):
                                         QDesktopServices.openUrl(QUrl.fromLocalFile(self.s.output_dir))))
         r2.addWidget(self.outdir, 1); r2.addWidget(b); r2.addWidget(b_open)
         ol.addRow("저장 폴더", r2)
+        self.album_folder = QCheckBox("앨범 이름으로 하위 폴더 만들기  (저장 폴더\\앨범 이름\\파일)")
+        self.album_folder.setChecked(self.s.album_folder)
+        self.album_folder.toggled.connect(self._album_folder_toggled)
+        ol.addRow("", self.album_folder)
         r3 = QHBoxLayout()
         self.tpl = QComboBox(editable=True)
         self.tpl.addItems(naming.PRESETS)
@@ -320,24 +345,76 @@ class MainWindow(QMainWindow):
         self.status = QLabel("준비")
         self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.rip_btn = QPushButton("●  리핑 시작")
-        f = self.rip_btn.font()
-        f.setBold(True)
-        f.setPointSizeF(f.pointSizeF() * 1.15)
-        self.rip_btn.setFont(f)
-        self.rip_btn.setMinimumHeight(px(32))
-        self.rip_btn.setMinimumWidth(px(170))
         self.rip_btn.clicked.connect(self.start_or_cancel)
         bottom.addWidget(self.status, 2)
         bottom.addWidget(self.progress, 3)
         bottom.addWidget(self.rip_btn)
         root.addLayout(bottom)
         self.logbox = QPlainTextEdit(readOnly=True, maximumBlockCount=2000)
-        self.logbox.setFixedHeight(self.logbox.fontMetrics().lineSpacing() * 3 + 14)   # always 3 lines
         root.addWidget(self.logbox)
+        self._apply_scale()
+        split.setSizes([px(300), px(1000)])
 
         idx = self.fmt.findData(self.s.format)
         self.fmt.setCurrentIndex(max(idx, 0))
         self._fmt_changed()
+
+    # ================================================================ UI size
+    def _apply_scale(self):
+        """(Re)apply every size that depends on the font size."""
+        self.drive_combo.setMinimumWidth(px(200))
+        self.ui_slider.setFixedWidth(px(110))
+        self.left_scroll.setMinimumWidth(px(260))
+        self.left_scroll.setMaximumWidth(px(400))
+        hh = self.table.horizontalHeader()
+        hh.setMinimumSectionSize(px(28))
+        for k, w in (("rip", 30), ("number", 34), ("artist", 130), ("composer", 80), ("lyricist", 70),
+                     ("isrc", 95), ("length", 46), ("status", 110)):
+            self.table.setColumnWidth(COL[k], px(w))
+        self.table.verticalHeader().setDefaultSectionSize(self.table.fontMetrics().height() + px(8))
+        self.right.setMinimumHeight(px(110))
+        f = QApplication.font()
+        f.setBold(True)
+        f.setPointSizeF(f.pointSizeF() * 1.15)
+        self.rip_btn.setFont(f)
+        self.rip_btn.setMinimumHeight(px(32))
+        self.rip_btn.setMinimumWidth(px(170))
+        self.logbox.setFixedHeight(self.logbox.fontMetrics().lineSpacing() * 3 + 14)   # always 3 lines
+
+    def _ui_slider_moved(self, v, apply=True):
+        self.ui_size_lbl.setText(f" {v} ")
+        if apply:
+            self._font_timer.start()
+
+    def set_ui_size(self, pt: int):
+        """Change the whole UI size live (font + every font-dependent size)."""
+        f = QApplication.font()
+        if f.pointSize() == pt:
+            return
+        f.setPointSize(pt)
+        QApplication.setFont(f)
+        self.s.font_pt = pt
+        self._save_soon()
+        QTimer.singleShot(0, self._apply_scale)   # after the font change has propagated
+
+    # ================================================================ genre / folders
+    def _genre_chosen(self, name):
+        self.album.genre = name
+        self.s.genre = name          # becomes the default for the next CD
+        self._save_soon()
+        self._update_preview()
+
+    def _sync_genre_buttons(self):
+        g = self.album.genre
+        self.genre_group.setExclusive(False)
+        for name, b in self.genre_btns.items():
+            b.setChecked(name == g)
+        self.genre_group.setExclusive(True)
+
+    def _album_folder_toggled(self, on):
+        self.s.album_folder = on
+        self._save_soon()
+        self._update_preview()
 
     # ================================================================ drives
     def refresh_drives(self):
@@ -391,7 +468,7 @@ class MainWindow(QMainWindow):
         self._cache_save()
         self.toc = None
         self.toc_was_empty = True
-        self.album = AlbumMeta()
+        self.album = AlbumMeta(genre=self.s.genre)
         self.set_cover(None)
         self.refresh_all()
         self.disc_info.setText("디스크 없음 — CD를 넣기 전에 웹캠 인식·직접 입력을 해 두면 CD를 넣을 때 그대로 적용됩니다.")
@@ -399,7 +476,7 @@ class MainWindow(QMainWindow):
 
     def _has_user_data(self) -> bool:
         a = self.album
-        if self.cover or any(getattr(a, k) for k, _ in ALBUM_FIELDS if k not in ("disc", "totaldiscs")):
+        if self.cover or any(getattr(a, k) for k, _ in ALBUM_FIELDS if k not in ("disc", "totaldiscs", "genre")):
             return True
         return any(t.title or t.artist or t.composer for t in a.tracks)
 
@@ -440,7 +517,7 @@ class MainWindow(QMainWindow):
         # info entered before the CD was inserted (webcam / typing / paste) is kept
         pending = (self.album, self.cover) if self.toc_was_empty and self._has_user_data() else None
         self.toc_was_empty = False
-        self.album = AlbumMeta(mb_discid=discid,
+        self.album = AlbumMeta(mb_discid=discid, genre=self.s.genre,
                                tracks=[TrackMeta(t.number, length=t.length) for t in audio])
         self.set_cover(None)
         cached = self._cache_load(discid)
@@ -514,6 +591,10 @@ class MainWindow(QMainWindow):
 
         for key, _ in ALBUM_FIELDS:
             val = getattr(a, key)
+            if key == "genre":
+                if val in GENRES:            # web genres like "K-Pop" are ignored: genre = Music / Audiobook
+                    cur.genre = val if (replace or not fill_empty) else (cur.genre or val)
+                continue
             if take(getattr(cur, key), val) and not (fill_empty and key in ("disc", "totaldiscs")):
                 setattr(cur, key, val)
         if not keep_ids:
@@ -530,7 +611,7 @@ class MainWindow(QMainWindow):
             src = by_no.get(t.number) or (a.tracks[i] if i < len(a.tracks) else None)
             if not src:
                 continue
-            for f in ("title", "artist", "composer", "lyricist", "genre", "isrc", "comment", "lyrics",
+            for f in ("title", "artist", "composer", "lyricist", "isrc", "comment", "lyrics",
                       "mb_recording_id"):
                 v = getattr(src, f)
                 if take(getattr(t, f), v):
@@ -599,7 +680,7 @@ class MainWindow(QMainWindow):
         self.album.tracks = [TrackMeta(i + 1) for i in range(n)]
         if self.auto_fill.isChecked():
             for t in self.album.tracks:
-                t.artist, t.genre, t.comment = self.album.albumartist, self.album.genre, self.album.comment
+                t.artist, t.comment = self.album.albumartist, self.album.comment
         self.refresh_tracks()
 
     # ================================================================ cover
@@ -672,6 +753,7 @@ class MainWindow(QMainWindow):
         self.compilation.blockSignals(True)
         self.compilation.setChecked(self.album.compilation)
         self.compilation.blockSignals(False)
+        self._sync_genre_buttons()
         self.refresh_tracks()
 
     def refresh_tracks(self):
@@ -704,7 +786,7 @@ class MainWindow(QMainWindow):
         self._update_preview()
 
     # album field → track field copied when "자동 반영" is on
-    AUTO_FILL = {"albumartist": "artist", "genre": "genre", "comment": "comment"}
+    AUTO_FILL = {"albumartist": "artist", "comment": "comment"}
 
     def _album_edited(self, key, value):
         old = getattr(self.album, key)
@@ -794,7 +876,7 @@ class MainWindow(QMainWindow):
         for n in missing:
             t = TrackMeta(n, length=self.toc.track(n).length)
             if self.auto_fill.isChecked():
-                t.artist, t.genre, t.comment = self.album.albumartist, self.album.genre, self.album.comment
+                t.artist, t.comment = self.album.albumartist, self.album.comment
             self.album.tracks.append(t)
         self.album.tracks.sort(key=lambda t: t.number)
         self.refresh_tracks()
@@ -853,7 +935,7 @@ class MainWindow(QMainWindow):
 
     def batch_edit(self):
         rows = self.selected_rows() or list(range(len(self.album.tracks)))
-        fields = [("artist", "아티스트"), ("composer", "작곡"), ("lyricist", "작사"), ("genre", "장르"),
+        fields = [("artist", "아티스트"), ("composer", "작곡"), ("lyricist", "작사"),
                   ("comment", "코멘트")]
         name, ok = QInputDialog.getItem(self, "일괄 입력", f"{len(rows)}개 트랙에 입력할 항목:",
                                         [f[1] for f in fields], 0, False)
@@ -982,10 +1064,7 @@ class MainWindow(QMainWindow):
             self.preview.setText("")
             return
         t = next((t for t in self.album.tracks if t.rip), self.album.tracks[0])
-        tpl = self.s.various_template if self.album.compilation else self.s.template
-        ext = encoders.FORMAT_BY_KEY[self.s.format].ext
-        self.preview.setText(os.path.join(self.s.output_dir, *naming.render(tpl, track_values(self.album, t))
-                                          .split("/")) + ext)
+        self.preview.setText(output_path(self.s, self.album, t))
 
     # ================================================================ rip
     def start_or_cancel(self):

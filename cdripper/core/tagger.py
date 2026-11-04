@@ -71,8 +71,7 @@ def _id3(path, album, track, v, cover, v23):
         tags.add(COMM(encoding=3, lang="kor", desc="", text=comment))
     if track.lyrics:
         tags.add(USLT(encoding=3, lang="kor", desc="", text=track.lyrics))
-    for desc, val in (("CATALOGNUMBER", album.catalog), ("BARCODE", album.barcode),
-                      ("MusicBrainz Album Id", album.mb_release_id),
+    for desc, val in (("MusicBrainz Album Id", album.mb_release_id),
                       ("MusicBrainz Release Group Id", album.mb_releasegroup_id),
                       ("MusicBrainz Disc Id", album.mb_discid)):
         if val:
@@ -100,7 +99,7 @@ def _vorbis(path, fmt, album, track, v, cover):
         "TRACKNUMBER": str(v["track"]), "TRACKTOTAL": str(v["totaltracks"]),
         "DISCNUMBER": str(v["disc"]), "DISCTOTAL": str(v["totaldiscs"]), "DATE": album.date,
         "GENRE": v["genre"], "COMPOSER": track.composer, "LYRICIST": track.lyricist, "LABEL": album.label,
-        "CATALOGNUMBER": album.catalog, "BARCODE": album.barcode, "ISRC": track.isrc,
+        "ISRC": track.isrc,
         "COMMENT": track.comment or album.comment, "LYRICS": track.lyrics,
         "COMPILATION": "1" if album.compilation else "",
         "MUSICBRAINZ_ALBUMID": album.mb_release_id, "MUSICBRAINZ_RELEASEGROUPID": album.mb_releasegroup_id,
@@ -138,7 +137,7 @@ def _mp4(path, album, track, v, cover):
             t[key] = val
     if album.compilation:
         t["cpil"] = True
-    for name, val in (("LABEL", album.label), ("CATALOGNUMBER", album.catalog), ("ISRC", track.isrc),
+    for name, val in (("LABEL", album.label), ("ISRC", track.isrc),
                       ("MusicBrainz Album Id", album.mb_release_id)):
         if val:
             t[f"----:com.apple.iTunes:{name}"] = [MP4FreeForm(val.encode())]
