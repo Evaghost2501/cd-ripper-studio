@@ -8,7 +8,7 @@ import re
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence, QFontMetrics, QShortcut, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+                               QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
                                QButtonGroup, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
                                QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
@@ -202,33 +202,30 @@ class MainWindow(QMainWindow):
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QScrollArea.NoFrame)
         self.left_scroll = left_scroll
+        left_scroll.viewport().installEventFilter(self)       # re-fit the cover when the height changes
         self.cover_lbl = CoverLabel("커버 없음\n끌어다 놓기", min_side=170, max_side=px(220))
         self.cover_lbl.setProperty("role", "cover")
         self.cover_lbl.setAcceptDrops(True)
         self.setAcceptDrops(True)
         # cover on the left, its buttons stacked on the right (saves vertical space)
         cover_row = QHBoxLayout()
-        cover_col = QVBoxLayout()
-        cover_col.addWidget(self.cover_lbl)
-        self.cover_info = QLabel(alignment=Qt.AlignCenter)
-        self.cover_info.setProperty("role", "muted")
-        self.cover_info.setFont(theme.mono_font())
-        cover_col.addWidget(self.cover_info)
-        cover_row.addLayout(cover_col)
-        cr = QVBoxLayout()
+        cover_row.addWidget(self.cover_lbl)                     # image size is shown in its tooltip
+        cr = QGridLayout()                                       # 2×2 buttons: low, so the form fits
         cover_btns = []
-        for text, fn in (("찾기", self.find_cover), ("파일", self.cover_from_file),
-                         ("붙여넣기", self.cover_from_clipboard), ("삭제", lambda: self.set_cover(None))):
+        for i, (text, fn) in enumerate((("찾기", self.find_cover), ("파일", self.cover_from_file),
+                                        ("붙여넣기", self.cover_from_clipboard),
+                                        ("삭제", lambda: self.set_cover(None)))):
             b = QPushButton(text)
             b.clicked.connect(fn)
             cover_btns.append(b)
-            cr.addWidget(b)
+            cr.addWidget(b, i // 2, i % 2)
         btn_w = max(b.sizeHint().width() for b in cover_btns)     # compact, all the same width
         for b in cover_btns:
             b.setFixedWidth(btn_w)
-        cr.addStretch()
-        cover_row.setStretch(0, 1)                               # the cover gets the spare width
+        cr.setRowStretch(2, 1)
+        self._cover_btn_grid = cr
         cover_row.addLayout(cr, 0)
+        cover_row.addStretch(1)                                  # cover + buttons stay together on the left
         ll.addLayout(cover_row)
 
         g = QGroupBox("앨범 정보")
@@ -262,20 +259,36 @@ class MainWindow(QMainWindow):
                     row.addWidget(b)
                 form.addRow(label, row)
                 continue
+            if key == "disc":            # "디스크  [1] / [1]" — shares the row with totaldiscs
+                self._disc_row = QHBoxLayout()
+                self._disc_row.addWidget(e)
+                form.addRow("디스크", self._disc_row)
+                continue
+            if key == "totaldiscs":
+                slash = QLabel("/")
+                slash.setProperty("role", "muted")
+                self._disc_row.addWidget(slash)
+                self._disc_row.addWidget(e)
+                e.setToolTip("총 디스크 수")
+                self.album_edits["disc"].setToolTip("디스크 번호")
+                continue
             form.addRow(label, e)
         self.album_edits["date"].setPlaceholderText("YYYY 또는 YYYY-MM-DD")
-        self.compilation = QCheckBox("컴필레이션 (여러 아티스트)")
+        checks = QHBoxLayout()                                   # both options on one row
+        self.compilation = QCheckBox("컴필레이션")
+        self.compilation.setToolTip("여러 아티스트 앨범 (컴필레이션용 파일 이름 규칙 사용)")
         self.compilation.toggled.connect(self._compilation_toggled)
-        form.addRow(self.compilation)
-        self.auto_fill = QCheckBox("앨범 정보를 트랙에 자동 반영 (아티스트·코멘트)")
+        checks.addWidget(self.compilation)
+        self.auto_fill = QCheckBox("트랙에 자동 반영")
         self.auto_fill.setToolTip("앨범 아티스트·코멘트를 입력하면 바로 모든 트랙에 들어갑니다.\n"
                                   "트랙에 따로 입력한 다른 값(예: feat. 아티스트)은 그대로 둡니다.")
         self.auto_fill.setChecked(self.s.auto_fill_tracks)
         self.auto_fill.toggled.connect(self._auto_fill_toggled)
-        form.addRow(self.auto_fill)
+        checks.addWidget(self.auto_fill)
+        checks.addStretch()
+        form.addRow(checks)
         self.disc_info = QLabel()
         self.disc_info.setProperty("role", "muted")
-        self.disc_info.setWordWrap(True)
         self.disc_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow(self.disc_info)
         ll.addWidget(g)
@@ -383,7 +396,7 @@ class MainWindow(QMainWindow):
         self.preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # long paths never widen the window
         ol.addRow("미리보기", self.preview)
-        root.addWidget(og)
+        rl.addWidget(og)          # output settings sit under the track list (right column)
 
         bottom = QHBoxLayout()
         self.progress = QProgressBar()
@@ -452,6 +465,27 @@ class MainWindow(QMainWindow):
             return
         self.s.column_widths = {**self.s.column_widths, key: round(new / ui_scale())}
         self._save_soon()
+
+    def eventFilter(self, obj, ev):
+        from PySide6.QtCore import QEvent
+        if ev.type() == QEvent.Resize and hasattr(self, "left_scroll") and obj is self.left_scroll.viewport():
+            QTimer.singleShot(0, self._fit_cover)
+        return super().eventFilter(obj, ev)
+
+    def _fit_cover(self):
+        """Album panel uses the full left column: the cover takes whatever height the album form
+        leaves free (between 120px and its normal maximum), so no scrolling is needed."""
+        if not hasattr(self, "left_scroll"):
+            return
+        lbl = self.cover_lbl
+        avail = self.left_scroll.viewport().height()
+        content = self.left_scroll.widget().sizeHint().height()
+        others = content - lbl.height()                     # everything except the cover
+        # as tall as the form leaves free, and as wide as the column leaves next to the buttons
+        room_w = self.left_scroll.viewport().width() - self._cover_btn_grid.sizeHint().width() - px(28)
+        side = max(120, min(px(220), avail - others - px(8), room_w))
+        if side != lbl.width() or side != lbl.height():
+            lbl.setFixedSize(side, side)
 
     def _ui_slider_moved(self, v, apply=True):
         self.ui_size_lbl.setText(f" {v} ")
@@ -598,7 +632,8 @@ class MainWindow(QMainWindow):
         self.album = AlbumMeta(genre=self.s.genre)
         self.set_cover(None)
         self.refresh_all()
-        self.disc_info.setText("디스크 없음 — CD를 넣기 전에 웹캠 인식·직접 입력을 해 두면 CD를 넣을 때 그대로 적용됩니다.")
+        self.disc_info.setText("디스크 없음")
+        self.disc_info.setToolTip("CD를 넣기 전에 웹캠 인식·직접 입력을 해 두면 CD를 넣을 때 그대로 적용됩니다.")
         self.status.setText("디스크 없음")
 
     def _has_user_data(self) -> bool:
@@ -638,8 +673,8 @@ class MainWindow(QMainWindow):
         self.toc = toc
         discid = toc.musicbrainz_discid()
         audio = toc.audio_tracks
-        self.disc_info.setText(f"{len(audio)}트랙 · {fmt_duration(toc.audio_leadout)}\n"
-                               f"MusicBrainz Disc ID: {discid}")
+        self.disc_info.setText(f"{len(audio)}트랙 · {fmt_duration(toc.audio_leadout)}")
+        self.disc_info.setToolTip(f"MusicBrainz Disc ID: {discid}")
         self.status.setText(f"오디오 CD: {len(audio)}트랙")
         # info entered before the CD was inserted (webcam / typing / paste) is kept
         pending = (self.album, self.cover) if self.toc_was_empty and self._has_user_data() else None
@@ -826,10 +861,10 @@ class MainWindow(QMainWindow):
         if data:
             self.cover_lbl.set_image(data)
             w, h = image_size(data)
-            self.cover_info.setText(f"{w}×{h}  ·  {len(data) // 1024} KB")
+            self.cover_lbl.setToolTip(f"커버 {w}×{h} · {len(data) // 1024} KB")
         else:
             self.cover_lbl.set_image(None, "커버 없음\n끌어다 놓기")
-            self.cover_info.setText("")
+            self.cover_lbl.setToolTip("이미지를 끌어다 놓거나 '찾기'를 누르세요")
 
     def find_cover(self):
         dlg = CoverDialog(self, self.album.albumartist, self.album.album, self.album.mb_release_id,
