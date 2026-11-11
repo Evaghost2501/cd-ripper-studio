@@ -118,6 +118,8 @@ class MainWindow(QMainWindow):
         self.rip_thread: RipThread | None = None
         self._media = None
         self._fill_empty_only = False
+        self._fit_timer = QTimer(self, singleShot=True, interval=0, timeout=self._fit_cover)
+        self._align_timer = QTimer(self, singleShot=True, interval=0, timeout=self._align_bottom)
         self._font_timer = QTimer(self, singleShot=True, interval=150,
                                   timeout=lambda: self.set_ui_size(self.ui_slider.value()))
         self._build_ui()
@@ -490,28 +492,35 @@ class MainWindow(QMainWindow):
     def eventFilter(self, obj, ev):
         from PySide6.QtCore import QEvent
         if ev.type() == QEvent.Resize and hasattr(self, "left_scroll"):
-            if obj is self.left_scroll.viewport():
-                QTimer.singleShot(0, self._fit_cover)
-            elif obj is self.left_scroll or obj is getattr(self, "right", None):
-                QTimer.singleShot(0, self._align_bottom)
+            # coalesce: many resize events → one fit / one alignment after the layout settles
+            if obj is self.left_scroll.viewport() or obj is self.left_scroll:
+                self._fit_timer.start()
+            if obj is self.left_scroll or obj is getattr(self, "right", None):
+                self._align_timer.start()
         return super().eventFilter(obj, ev)
 
     def _fit_cover(self):
         """Album panel uses the full left column: the cover takes whatever height the album form
         leaves free (between 120px and its normal maximum), so no scrolling is needed."""
-        if not hasattr(self, "left_scroll"):
+        if not hasattr(self, "left_scroll") or getattr(self, "_fitting", False):
             return
-        lbl = self.cover_lbl
-        vp = self.left_scroll.viewport()
-        m = self.left_scroll.widget().layout().contentsMargins()
-        content = self.left_scroll.widget().minimumSizeHint().height()
-        others = content - lbl.minimumHeight()              # buttons + album info + spacing
-        # frame = full column width; height = what the buttons and album info leave free
-        # (never taller than it is wide); the image is fitted inside without distortion
-        w = max(120, vp.width() - m.left() - m.right())
-        h = max(120, min(w, vp.height() - others - px(4)))
-        if (w, h) != (lbl.width(), lbl.height()):
-            lbl.setFixedSize(w, h)
+        self._fitting = True
+        try:
+            lbl = self.cover_lbl
+            sc = self.left_scroll
+            m = sc.widget().layout().contentsMargins()
+            content = sc.widget().minimumSizeHint().height()
+            others = content - lbl.minimumHeight()              # buttons + album info + spacing
+            # Width is taken from the scroll area itself, always leaving room for the vertical
+            # scroll bar: if it depended on whether the bar is shown, showing/hiding the bar would
+            # resize the cover, which would show/hide the bar again … (an endless loop).
+            bar = sc.verticalScrollBar().sizeHint().width()
+            w = max(120, sc.width() - 2 * sc.frameWidth() - bar - m.left() - m.right())
+            h = max(120, min(w, sc.viewport().height() - others - px(4)))
+            if abs(w - lbl.width()) > 1 or abs(h - lbl.height()) > 1:
+                lbl.setFixedSize(w, h)
+        finally:
+            self._fitting = False
 
     def _align_bottom(self):
         """Status text sits under the album column; the progress bar starts exactly where the

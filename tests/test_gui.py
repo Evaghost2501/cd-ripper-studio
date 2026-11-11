@@ -299,7 +299,8 @@ def test_cover_fills_column_and_album_panel_does_not_overflow(win):
     w.resize(1500, 640); w.show(); QTest.qWait(200)         # short window: height limits the cover
     sc = w.left_scroll
     m = sc.widget().layout().contentsMargins()
-    assert w.cover_lbl.width() == sc.viewport().width() - m.left() - m.right()   # full column width
+    bar = sc.verticalScrollBar().sizeHint().width()
+    assert abs(w.cover_lbl.width() - (sc.width() - 2 * sc.frameWidth() - bar - m.left() - m.right())) <= 1
     assert sc.widget().width() <= sc.viewport().width()          # nothing cut off on the right
     h1 = w.cover_lbl.height()
     w.resize(1500, 900); QTest.qWait(200)
@@ -339,3 +340,20 @@ def test_webcam_quiet_failure_shows_message_in_view(monkeypatch):
     dlg = ocr_dialog.OcrDialog(None, 4)
     dlg.toggle_camera(quiet=True)
     assert "열 수 없습니다" in dlg.view.text() and dlg.cap is None
+
+
+def test_cover_fit_settles_without_looping(win):
+    """Showing/hiding the album column's scroll bar must not resize the cover again (no endless loop)."""
+    w, app, _ = win
+    from PySide6.QtTest import QTest
+    calls = []
+    orig = type(w)._fit_cover
+    type(w)._fit_cover = lambda self: (calls.append(1), orig(self))
+    try:
+        for h in range(560, 760, 7):                # sweep across the scroll bar threshold
+            w.resize(1400, h); w.show(); QTest.qWait(30)
+        n = len(calls)
+        QTest.qWait(500)                             # idle: nothing may keep re-fitting
+        assert len(calls) - n <= 2
+    finally:
+        type(w)._fit_cover = orig
