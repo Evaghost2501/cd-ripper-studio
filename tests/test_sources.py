@@ -21,8 +21,16 @@ MB_DISCID = {"releases": [{
 def test_musicbrainz_discid_parse(monkeypatch):
     toc = Toc(1, 2, 30000, [TocTrack(1, 0), TocTrack(2, 15000)])
     monkeypatch.setattr(toc.__class__, "musicbrainz_discid", lambda self: "DISCID")
-    monkeypatch.setattr(web, "_get", lambda *a, **k: MB_DISCID)
+    calls = []
+
+    def fake_get(url, params=None, **k):
+        calls.append((url, params))
+        return MB_DISCID["releases"][0] if "/release/" in url else MB_DISCID
+    monkeypatch.setattr(web, "_get", fake_get)
     [a] = web.mb_lookup_disc(toc)
+    # disc-ID lookup uses only the includes MusicBrainz accepts there; credits come from the release lookup
+    assert "/discid/" in calls[0][0] and "genres" not in calls[0][1]["inc"] and "rels" not in calls[0][1]["inc"]
+    assert "/release/rel-1" in calls[1][0] and "work-rels" in calls[1][1]["inc"]
     assert (a.albumartist, a.album, a.date, a.genre) == ("IU", "Palette", "2017-04-21", "K-Pop")
     assert (a.label, a.catalog, a.mb_discid) == ("LOEN Entertainment", "L100005234", "DISCID")
     assert a.tracks[0].composer == "IU" and a.tracks[0].isrc == "KRA381700001"

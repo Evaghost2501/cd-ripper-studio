@@ -52,7 +52,10 @@ def _artist_credit(ac) -> str:
 
 # ----------------------------- MusicBrainz -----------------------------------
 MB = "https://musicbrainz.org/ws/2"
-INC = "artist-credits+recordings+labels+release-groups+isrcs+genres+recording-level-rels+work-rels+work-level-rels+artist-rels"
+# Release lookups: tracks + composer / lyricist (work relationships).
+INC = "artist-credits+recordings+labels+release-groups+isrcs+recording-level-rels+work-rels+work-level-rels+artist-rels"
+# Disc-ID lookups accept fewer includes (extra ones make MusicBrainz answer 400 Bad Request).
+DISC_INC = "artist-credits+recordings+labels+release-groups+isrcs"
 
 
 def _mb_release_to_album(rel: dict, discid: str = "", toc: Toc | None = None) -> AlbumMeta:
@@ -110,15 +113,21 @@ def _mb_release_to_album(rel: dict, discid: str = "", toc: Toc | None = None) ->
 def mb_lookup_disc(toc: Toc) -> list[AlbumMeta]:
     discid = toc.musicbrainz_discid()
     try:
-        data = _get(f"{MB}/discid/{discid}", {"toc": toc.musicbrainz_toc(), "inc": INC, "fmt": "json"}, mb=True)
+        data = _get(f"{MB}/discid/{discid}", {"toc": toc.musicbrainz_toc(), "inc": DISC_INC, "fmt": "json"},
+                    mb=True)
     except requests.HTTPError as e:
         if e.response is not None and e.response.status_code == 404:
             return []
         raise
     rels = data.get("releases", [])
     out = []
-    for r in rels:
+    for i, r in enumerate(rels):
         exact = any(d.get("id") == discid for m in r.get("media", []) for d in m.get("discs", []))
+        if i < 3:   # the first few: full release lookup for composer / lyricist credits
+            try:
+                r = _get(f"{MB}/release/{r['id']}", {"inc": INC, "fmt": "json"}, mb=True)
+            except requests.RequestException:
+                pass    # keep the basic data from the disc-ID lookup
         out.append(_mb_release_to_album(r, discid if exact else "", toc))
     return out
 

@@ -290,13 +290,22 @@ def palette(theme: str) -> QPalette:
     return p
 
 
+def font_px(font: QFont) -> int:
+    """Pixel size of the UI font at the logical 96 dpi Qt uses for layout (point size × 4/3).
+    Computed from the point size so it does not depend on the platform's font database."""
+    pt = font.pointSizeF()
+    if pt > 0:
+        return round(pt * 96 / 72)
+    return max(10, font.pixelSize(), QFontInfo(font).pixelSize())
+
+
 def apply(theme: str = "dark"):
     """Apply the Flux theme to the whole application (call again after a font-size change)."""
     app = QApplication.instance()
     theme = theme if theme in THEMES else "dark"
     _current["theme"] = theme
     app.setPalette(palette(theme))
-    app.setStyleSheet(stylesheet(theme, QFontInfo(app.font()).pixelSize()))
+    app.setStyleSheet(stylesheet(theme, font_px(app.font())))
 
 
 def current() -> str:
