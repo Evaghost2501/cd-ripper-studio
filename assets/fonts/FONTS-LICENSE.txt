@@ -1,0 +1,9 @@
+Fonts bundled with CD Ripper Studio (from the "Purple Green Flux" design system)
+
+Pretendard            - Copyright (c) Kil Hyung-jin, SIL Open Font License 1.1
+                        https://github.com/orioncactus/pretendard
+JetBrains Mono        - Copyright (c) The JetBrains Mono Project Authors, SIL Open Font License 1.1
+                        https://github.com/JetBrains/JetBrainsMono
+
+The files here are static instances (weights 400 / 600 / 700) generated from the variable fonts.
+License text: https://openfontlicense.org

@@ -82,6 +82,9 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(tabs)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("저장")
+        bb.button(QDialogButtonBox.Ok).setProperty("variant", "primary")
+        bb.button(QDialogButtonBox.Cancel).setText("취소")
         bb.accepted.connect(self._ok); bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 

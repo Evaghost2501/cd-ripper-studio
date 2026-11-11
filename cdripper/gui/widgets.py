@@ -67,7 +67,7 @@ class FlowLayout(QLayout):
 
 
 class TitlePresetBar(QWidget):
-    """'빠른 제목:' + one button per preset title + '✏ 목록 편집'. Emits chosen(title)."""
+    """'빠른 제목:' + one button per preset title + '목록 편집'. Emits chosen(title)."""
     chosen = Signal(str)
     edited = Signal(list)
 
@@ -86,15 +86,17 @@ class TitlePresetBar(QWidget):
             if w:
                 w.deleteLater()
         lbl = QLabel("빠른 제목:")
+        lbl.setProperty("role", "muted")
         lbl.setToolTip("트랙을 선택하고 버튼을 누르면 제목이 들어가고 다음 트랙으로 넘어갑니다.\n"
                        "여러 트랙을 선택하면 한꺼번에 들어갑니다.")
         self.flow.addWidget(lbl)
         for title in self.presets:
             b = QPushButton(title)
+            b.setProperty("variant", "chip")
             b.setFocusPolicy(Qt.NoFocus)          # keep the table's selection/focus
             b.clicked.connect(lambda _=False, t=title: self.chosen.emit(t))
             self.flow.addWidget(b)
-        e = QPushButton("✏ 목록 편집")
+        e = QPushButton("목록 편집")
         e.setFocusPolicy(Qt.NoFocus)
         e.clicked.connect(self.edit)
         self.flow.addWidget(e)

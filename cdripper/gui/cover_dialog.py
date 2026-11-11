@@ -86,7 +86,7 @@ if HAS_WEBENGINE:
             if req is not None and req.mediaType() == QWebEngineContextMenuRequest.MediaType.MediaTypeImage \
                     and req.mediaUrl().isValid():
                 url = req.mediaUrl().toString()
-                act = QAction("✅ 이 이미지를 커버로 사용", menu)
+                act = QAction("이 이미지를 커버로 사용", menu)
                 f = act.font(); f.setBold(True); act.setFont(f)
                 act.triggered.connect(lambda: self.choose(url))
                 first = menu.actions()[0] if menu.actions() else None
@@ -121,7 +121,7 @@ class CoverDialog(QDialog):
         row.addWidget(self.query, 1)
         self.site_btns = {}
         for name in SITES:
-            b = QPushButton(("🔍 " if name.startswith("Google") else "") + name)
+            b = QPushButton(name)
             b.clicked.connect(lambda _=False, n=name: self.open_site(n))
             row.addWidget(b)
             self.site_btns[name] = b
@@ -140,14 +140,17 @@ class CoverDialog(QDialog):
             wl = QVBoxLayout(web_tab)
             wl.setContentsMargins(0, 0, 0, 0)
             hint = QLabel("① 이미지를 클릭해 크게 연 다음  ② 큰 이미지에서 <b>마우스 오른쪽 버튼 → "
-                          "'✅ 이 이미지를 커버로 사용'</b>  (작은 썸네일에서 바로 골라도 됩니다)")
+                          "'이 이미지를 커버로 사용'</b>  (작은 썸네일에서 바로 골라도 됩니다)")
             hint.setWordWrap(True)
+            hint.setProperty("role", "muted")
             wl.addWidget(hint)
             self.view = CoverWebView()
+            from . import theme
+            self.view.page().setBackgroundColor(theme.qcolor("surface"))   # no white flash before a page loads
             self.view.imageChosen.connect(self.use_image_url)
             self.view.urlChanged.connect(lambda u: setattr(self, "_page_url", u.toString()))
             wl.addWidget(self.view, 1)
-            self.tabs.addTab(web_tab, "🌐 Google · Yes24 · Amazon")
+            self.tabs.addTab(web_tab, "Google · Yes24 · Amazon")
         else:
             self.view = None
 
@@ -156,7 +159,7 @@ class CoverDialog(QDialog):
         gl = QVBoxLayout(grid_tab)
         gl.setContentsMargins(0, 0, 0, 0)
         g_row = QHBoxLayout()
-        g_btn = QPushButton("🎵 iTunes · Deezer · Cover Art Archive 검색")
+        g_btn = QPushButton("iTunes · Deezer · Cover Art Archive 검색")
         g_btn.clicked.connect(self.search_music)
         g_row.addWidget(g_btn)
         g_row.addStretch()
@@ -171,7 +174,7 @@ class CoverDialog(QDialog):
         self.list.setWordWrap(True)
         self.list.itemDoubleClicked.connect(lambda *_: self.use_selected())
         gl.addWidget(self.list, 1)
-        self.tabs.addTab(grid_tab, "🎵 음악 서비스")
+        self.tabs.addTab(grid_tab, "음악 서비스")
         self.tabs.currentChanged.connect(self._tab_changed)
 
         self.status = QLabel()
@@ -179,13 +182,14 @@ class CoverDialog(QDialog):
         lay.addWidget(self.status)
 
         bottom = QHBoxLayout()
-        for text, fn in (("📂 파일에서…", self.from_file), ("🔗 URL 붙여넣기…", self.from_url),
-                         ("📋 클립보드 이미지", self.from_clipboard)):
+        for text, fn in (("파일에서…", self.from_file), ("URL 붙여넣기…", self.from_url),
+                         ("클립보드 이미지", self.from_clipboard)):
             b = QPushButton(text)
             b.clicked.connect(fn)
             bottom.addWidget(b)
         bottom.addStretch()
         self.use_btn = QPushButton("선택한 이미지 사용")
+        self.use_btn.setProperty("variant", "primary")
         self.use_btn.clicked.connect(self.use_selected)
         bottom.addWidget(self.use_btn)
         bb = QDialogButtonBox(QDialogButtonBox.Cancel)

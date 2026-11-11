@@ -11,7 +11,7 @@ try:  # Windows OCR (pywinrt) is a namespace package with many .pyd files
 except Exception:
     pass
 
-datas = [("assets/icon.ico", "assets"), ("assets/icon.png", "assets")]
+datas = [("assets/icon.ico", "assets"), ("assets/icon.png", "assets"), ("assets/fonts", "assets/fonts")]
 if os.path.exists("ffmpeg.exe"):          # optional: bundle ffmpeg for AAC/ALAC
     binaries.append(("ffmpeg.exe", "."))
 

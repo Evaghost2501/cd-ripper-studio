@@ -123,7 +123,7 @@ class RipJob:
                 report.tracks.append(rep)
                 self.log(f"트랙 {tm.number:02d} 읽기 완료  CRC {rep.crc32:08X}  {ar_text(rep)}"
                          + (f"  재독취 {rep.rereads}구간" if rep.rereads else "")
-                         + (f"  ⚠ 복구 불가 {rep.unrecovered}구간" if rep.unrecovered else ""))
+                         + (f"  주의: 복구 불가 {rep.unrecovered}구간" if rep.unrecovered else ""))
         except Cancelled:
             report.cancelled = True
             self.log("사용자가 취소했습니다.")

@@ -27,9 +27,10 @@ from .ocr_dialog import OcrDialog
 from .search_dialog import SearchDialog
 from .settings_dialog import SettingsDialog
 from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async, ui_scale
+from . import theme
 from .widgets import CoverLabel, TitlePresetBar, apply_title_to_table
 
-COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
+COLS = [("rip", "✓"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
         ("lyricist", "작사"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
 COL = {k: i for i, (k, _) in enumerate(COLS)}
 EDITABLE = {"title", "artist", "composer", "lyricist", "isrc"}
@@ -73,6 +74,9 @@ class TrackDetailDialog(QDialog):
         self.lyrics = QPlainTextEdit(t.lyrics)
         f.addRow("가사", self.lyrics)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("저장")
+        bb.button(QDialogButtonBox.Ok).setProperty("variant", "primary")
+        bb.button(QDialogButtonBox.Cancel).setText("취소")
         bb.accepted.connect(self._ok); bb.rejected.connect(self.reject)
         f.addRow(bb)
 
@@ -124,14 +128,26 @@ class MainWindow(QMainWindow):
             tb.addAction(a)
             return a
 
-        act("⟳ 새로고침", self.load_disc, "디스크 다시 읽기 (F5)", "F5")
-        act("⏏ 꺼내기", self.eject)
+        act("새로고침", self.load_disc, "디스크 다시 읽기 (F5)", "F5")
+        act("꺼내기", self.eject)
         tb.addSeparator()
-        act("🌐 정보 검색", self.search_metadata, "웹에서 앨범 정보 찾기: MusicBrainz · iTunes · Deezer (Ctrl+F)", "Ctrl+F")
-        act("🖼 커버", self.find_cover, "Google 이미지에서 커버 찾기 (Ctrl+I)", "Ctrl+I")
-        act("📷 웹캠 인식", self.ocr_tracks, "CD 뒷면을 웹캠으로 찍어 트랙 제목 인식 (Ctrl+K)", "Ctrl+K")
+        act("정보 검색", self.search_metadata, "웹에서 앨범 정보 찾기: MusicBrainz · iTunes · Deezer (Ctrl+F)", "Ctrl+F")
+        act("커버", self.find_cover, "Google 이미지에서 커버 찾기 (Ctrl+I)", "Ctrl+I")
+        act("웹캠 인식", self.ocr_tracks, "CD 뒷면을 웹캠으로 찍어 트랙 제목 인식 (Ctrl+K)", "Ctrl+K")
         tb.addSeparator()
-        act("⚙ 설정", self.open_settings)
+        act("설정", self.open_settings)
+        tb.addSeparator()
+        self.theme_btns = {}
+        theme_group = QButtonGroup(tb)
+        for key, label in theme.THEMES.items():
+            b = QPushButton(label, checkable=True)
+            b.setProperty("variant", "chip")
+            b.setChecked(self.s.theme == key)
+            b.setToolTip("화면 테마: Night(어두움) / Day(밝음)")
+            b.clicked.connect(lambda _=False, k=key: self.set_theme(k))
+            theme_group.addButton(b)
+            self.theme_btns[key] = b
+            tb.addWidget(b)
         tb.addSeparator()
         tb.addWidget(QLabel(" UI 크기 "))
         self.ui_slider = QSlider(Qt.Horizontal)
@@ -187,7 +203,7 @@ class MainWindow(QMainWindow):
         left_scroll.setFrameShape(QScrollArea.NoFrame)
         self.left_scroll = left_scroll
         self.cover_lbl = CoverLabel("커버 없음\n끌어다 놓기", min_side=170, max_side=px(220))
-        self.cover_lbl.setStyleSheet("border:1px dashed #999; color:#888;")
+        self.cover_lbl.setProperty("role", "cover")
         self.cover_lbl.setAcceptDrops(True)
         self.setAcceptDrops(True)
         # cover on the left, its buttons stacked on the right (saves vertical space)
@@ -195,13 +211,14 @@ class MainWindow(QMainWindow):
         cover_col = QVBoxLayout()
         cover_col.addWidget(self.cover_lbl)
         self.cover_info = QLabel(alignment=Qt.AlignCenter)
-        self.cover_info.setStyleSheet("color:#777")
+        self.cover_info.setProperty("role", "muted")
+        self.cover_info.setFont(theme.mono_font())
         cover_col.addWidget(self.cover_info)
         cover_row.addLayout(cover_col)
         cr = QVBoxLayout()
         cover_btns = []
-        for text, fn in (("🔍 찾기", self.find_cover), ("📂 파일", self.cover_from_file),
-                         ("📋 붙여넣기", self.cover_from_clipboard), ("✖ 삭제", lambda: self.set_cover(None))):
+        for text, fn in (("찾기", self.find_cover), ("파일", self.cover_from_file),
+                         ("붙여넣기", self.cover_from_clipboard), ("삭제", lambda: self.set_cover(None))):
             b = QPushButton(text)
             b.clicked.connect(fn)
             cover_btns.append(b)
@@ -222,8 +239,9 @@ class MainWindow(QMainWindow):
                 row = QHBoxLayout()
                 self.genre_group = QButtonGroup(self)
                 self.genre_btns = {}
-                for gname, glabel in (("Music", "🎵 Music"), ("Audiobook", "📖 Audiobook")):
+                for gname, glabel in (("Music", "Music"), ("Audiobook", "Audiobook")):
                     b = QPushButton(glabel, checkable=True)
+                    b.setProperty("variant", "chip")
                     self.genre_group.addButton(b)
                     self.genre_btns[gname] = b
                     b.clicked.connect(lambda _=False, gn=gname: self._genre_chosen(gn))
@@ -238,6 +256,7 @@ class MainWindow(QMainWindow):
                 row.addWidget(e, 1)
                 for name in self.s.label_presets:
                     b = QPushButton(name)
+                    b.setProperty("variant", "chip")
                     b.setToolTip(f"레이블에 '{name}' 입력")
                     b.clicked.connect(lambda _=False, n=name: self._set_label(n))
                     row.addWidget(b)
@@ -255,7 +274,7 @@ class MainWindow(QMainWindow):
         self.auto_fill.toggled.connect(self._auto_fill_toggled)
         form.addRow(self.auto_fill)
         self.disc_info = QLabel()
-        self.disc_info.setStyleSheet("color:#777")
+        self.disc_info.setProperty("role", "muted")
         self.disc_info.setWordWrap(True)
         self.disc_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow(self.disc_info)
@@ -298,17 +317,17 @@ class MainWindow(QMainWindow):
             b = QPushButton(text)
             b.clicked.connect(lambda _=False, v=val: self._set_all_rip(v))
             sel.addWidget(b)
-        b = QPushButton("🗑 선택 트랙 삭제")
+        b = QPushButton("선택 트랙 삭제")
         b.setToolTip("선택한 트랙을 목록에서 뺍니다 (Delete 키). 리핑되지 않습니다.")
         b.clicked.connect(self.delete_tracks)
         sel.addWidget(b)
-        self.restore_btn = QPushButton("↺ 삭제한 트랙 복원")
+        self.restore_btn = QPushButton("삭제한 트랙 복원")
         self.restore_btn.clicked.connect(self.restore_tracks)
         self.restore_btn.setEnabled(False)
         sel.addWidget(self.restore_btn)
         QShortcut(QKeySequence.Delete, self.table, self.delete_tracks, context=Qt.WidgetShortcut)
         hint = QLabel("더블클릭: 수정 · '#' 더블클릭: 가사/코멘트 · 우클릭: 일괄 편집 · 제목줄 우클릭: 열 표시")
-        hint.setStyleSheet("color:#777")
+        hint.setProperty("role", "muted")
         hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         sel.addWidget(hint, 1)
         rl.addLayout(sel)
@@ -326,7 +345,7 @@ class MainWindow(QMainWindow):
             self.fmt.addItem(f.name, f.key)
         self.quality = QComboBox()
         self.fmt_note = QLabel()
-        self.fmt_note.setStyleSheet("color:#777")
+        self.fmt_note.setProperty("role", "muted")
         self.fmt_note.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.fmt.currentIndexChanged.connect(self._fmt_changed)
         self.quality.currentIndexChanged.connect(self._quality_changed)
@@ -335,7 +354,7 @@ class MainWindow(QMainWindow):
         r2 = QHBoxLayout()
         self.outdir = QLineEdit(self.s.output_dir)
         self.outdir.editingFinished.connect(self._outdir_changed)
-        b = QPushButton("📁 폴더 선택…")
+        b = QPushButton("폴더 선택…")
         b.setToolTip("저장 폴더를 고릅니다. 한 번 정하면 다음 실행 때도 이 폴더가 기본값입니다.")
         b.clicked.connect(self._browse_outdir)
         b_open = QPushButton("열기")
@@ -360,7 +379,7 @@ class MainWindow(QMainWindow):
         r3.addWidget(self.tpl, 1); r3.addWidget(b_reset); r3.addWidget(tb_help)
         ol.addRow("파일 이름 규칙", r3)
         self.preview = QLabel()
-        self.preview.setStyleSheet("color:#1565c0")
+        self.preview.setProperty("role", "accent")
         self.preview.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # long paths never widen the window
         ol.addRow("미리보기", self.preview)
@@ -368,16 +387,18 @@ class MainWindow(QMainWindow):
 
         bottom = QHBoxLayout()
         self.progress = QProgressBar()
-        self.progress.setFormat("%p%")
+        self.progress.setTextVisible(False)     # % is shown in the status line (mono)
         self.status = QLabel("준비")
         self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.rip_btn = QPushButton("●  리핑 시작")
+        self.rip_btn = QPushButton("리핑 시작")
+        self.rip_btn.setProperty("variant", "primary")      # the one primary action of the window
         self.rip_btn.clicked.connect(self.start_or_cancel)
         bottom.addWidget(self.status, 2)
         bottom.addWidget(self.progress, 3)
         bottom.addWidget(self.rip_btn)
         root.addLayout(bottom)
         self.logbox = QPlainTextEdit(readOnly=True, maximumBlockCount=2000)
+        self.logbox.setProperty("role", "log")
         root.addWidget(self.logbox)
         self._apply_scale()
         split.setSizes([px(300), px(1000)])
@@ -389,7 +410,7 @@ class MainWindow(QMainWindow):
     # ================================================================ UI size
     def _apply_scale(self):
         """(Re)apply every size that depends on the font size."""
-        self.drive_combo.setMinimumWidth(px(200))
+        self.drive_combo.setMinimumWidth(px(140))
         self.ui_slider.setFixedWidth(px(110))
         self.left_scroll.setMinimumWidth(px(260))
         self.left_scroll.setMaximumWidth(px(400))
@@ -410,6 +431,18 @@ class MainWindow(QMainWindow):
         self.rip_btn.setMinimumHeight(px(32))
         self.rip_btn.setMinimumWidth(px(170))
         self.logbox.setFixedHeight(QFontMetrics(QApplication.font()).lineSpacing() * 3 + 14)   # always 3 lines
+
+    def set_theme(self, key: str):
+        if key == theme.current() and self.s.theme == key:
+            return
+        self.s.theme = key
+        self._save_soon()
+        theme.apply(key)
+        # colours that live in item data (track status) follow the theme too
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, COL["status"])
+            if it is not None and it.data(Qt.UserRole):
+                it.setForeground(theme.qcolor(it.data(Qt.UserRole)))
 
     def _column_resized(self, index, _old, new):
         if getattr(self, "_applying_widths", False):
@@ -438,6 +471,7 @@ class MainWindow(QMainWindow):
             return
         f.setPointSize(pt)
         QApplication.setFont(f)
+        theme.apply(self.s.theme)               # paddings / radii follow the font size
         QApplication.sendPostedEvents()        # let the window pick up the new font before rebuilding
         self.s.font_pt = pt
         self._save_soon()
@@ -625,7 +659,7 @@ class MainWindow(QMainWindow):
         if pending:
             p_album, p_cover = pending
             if len(p_album.tracks) not in (0, len(audio)):
-                self.log(f"⚠ 미리 입력한 트랙 수({len(p_album.tracks)})와 CD 트랙 수({len(audio)})가 다릅니다. "
+                self.log(f"주의: 미리 입력한 트랙 수({len(p_album.tracks)})와 CD 트랙 수({len(audio)})가 다릅니다. "
                          "번호대로 적용했습니다.")
             self.apply_album(p_album, keep_ids=True)
             if p_cover:
@@ -699,7 +733,7 @@ class MainWindow(QMainWindow):
             cur.compilation = a.compilation
         by_no = {t.number: t for t in a.tracks}
         if len(a.tracks) != len(cur.tracks) and cur.tracks and a.tracks:
-            self.log(f"⚠ 트랙 수가 다릅니다 (CD {len(cur.tracks)} / 검색 결과 {len(a.tracks)}). 번호 순서대로 적용했습니다.")
+            self.log(f"주의: 트랙 수가 다릅니다 (CD {len(cur.tracks)} / 검색 결과 {len(a.tracks)}). 번호 순서대로 적용했습니다.")
         for i, t in enumerate(cur.tracks):
             src = by_no.get(t.number) or (a.tracks[i] if i < len(a.tracks) else None)
             if not src:
@@ -872,14 +906,19 @@ class MainWindow(QMainWindow):
                     it.setCheckState(Qt.Checked if t.rip else Qt.Unchecked)
                 elif key == "number":
                     it = QTableWidgetItem(f"{t.number:02d}")
+                    it.setFont(theme.mono_font())
                     it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     it.setToolTip("더블클릭: 상세 정보 (가사, 코멘트)")
                 elif key == "length":
                     it = QTableWidgetItem(fmt_duration(t.length) if t.length else "")
+                    it.setFont(theme.mono_font())
                     it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 elif key == "status":
                     old = self.table.item(r, COL["status"])
                     it = QTableWidgetItem(old.text() if old else "")
+                    if old is not None and old.data(Qt.UserRole):
+                        it.setForeground(theme.qcolor(old.data(Qt.UserRole)))
+                        it.setData(Qt.UserRole, old.data(Qt.UserRole))
                     it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                 else:
                     it = QTableWidgetItem(getattr(t, key))
@@ -1122,7 +1161,7 @@ class MainWindow(QMainWindow):
         self.quality.blockSignals(False)
         note = fi.note
         if fi.needs_ffmpeg and not encoders.find_ffmpeg(self.s.ffmpeg_path):
-            note = "⚠ ffmpeg.exe가 필요합니다 (exe 옆에 두거나 설정에서 지정). " + note
+            note = "ffmpeg.exe가 필요합니다 (exe 옆에 두거나 설정에서 지정). " + note
         self.fmt_note.setText(note)
         self.s.format = key
         self._save_soon()
@@ -1218,7 +1257,7 @@ class MainWindow(QMainWindow):
         self.rip_thread.track_done.connect(self._on_track_done)
         self.rip_thread.log.connect(self.log)
         self.rip_thread.report.connect(self._on_report)
-        self.rip_btn.setText("■  취소")
+        self.rip_btn.setText("취소")
         self._set_editing(False)
         self.rip_thread.start()
 
@@ -1229,7 +1268,7 @@ class MainWindow(QMainWindow):
     def _on_progress(self, track, frac, text):
         self.progress.setValue(int(frac * 100))
         if track:
-            self.status.setText(f"트랙 {track:02d} {text}…")
+            self.status.setText(f"트랙 {track:02d} {text}…  {int(frac * 100)}%")
             row = next((i for i, t in enumerate(self.album.tracks) if t.number == track), None)
             if row is not None:
                 self.table.item(row, COL["status"]).setText("읽는 중…")
@@ -1238,15 +1277,22 @@ class MainWindow(QMainWindow):
         row = next((i for i, t in enumerate(self.album.tracks) if t.number == rep.number), None)
         if row is None:
             return
-        txt = ("❌ " + rep.error) if rep.error else (
-            ("✅ " if rep.ar_status in ("v1", "v2") else ("⚠ " if rep.unrecovered or rep.ar_status == "mismatch"
-                                                          else "✔ ")) + ar_text(rep))
+        if rep.error:
+            txt, tone = "실패 · " + rep.error, "danger"
+        elif rep.ar_status in ("v1", "v2"):
+            txt, tone = "✓ " + ar_text(rep), "mint-text"            # verified = success
+        elif rep.unrecovered or rep.ar_status == "mismatch":
+            txt, tone = "주의 · " + ar_text(rep), "warning"
+        else:
+            txt, tone = "✓ 저장됨 · " + ar_text(rep), "ink"
         it = self.table.item(row, COL["status"])
         it.setText(txt)
+        it.setForeground(theme.qcolor(tone))
+        it.setData(Qt.UserRole, tone)
         it.setToolTip(rep.path or rep.error)
 
     def _on_report(self, rep: JobReport):
-        self.rip_btn.setText("●  리핑 시작")
+        self.rip_btn.setText("리핑 시작")
         self.rip_btn.setEnabled(True)
         self._set_editing(True)
         ok = [r for r in rep.tracks if r.path]
@@ -1260,7 +1306,7 @@ class MainWindow(QMainWindow):
             box = QMessageBox(self)
             box.setWindowTitle("리핑 완료")
             box.setText(f"{len(ok)}개 트랙을 저장했습니다.\n{rep.folder}" +
-                        (f"\n\n⚠ 문제 트랙: {', '.join(str(r.number) for r in bad)}" if bad else ""))
+                        (f"\n\n문제 트랙: {', '.join(str(r.number) for r in bad)}" if bad else ""))
             open_btn = box.addButton("폴더 열기", QMessageBox.AcceptRole)
             box.addButton("닫기", QMessageBox.RejectRole)
             box.exec()

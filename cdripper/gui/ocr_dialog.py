@@ -21,7 +21,7 @@ class ImageView(QLabel):
     def __init__(self):
         super().__init__(alignment=Qt.AlignCenter)
         self.setMinimumSize(560, 420)
-        self.setStyleSheet("background:#111; color:#aaa;")
+        self.setProperty("role", "viewer")
         self.image: QImage | None = None
         self.sel: QRect | None = None         # selection in image coordinates
         self._origin = None
@@ -53,7 +53,8 @@ class ImageView(QLabel):
             p.fillRect(pm.rect(), QColor(0, 0, 0, 110))
             r = QRect(int(self.sel.x() * s), int(self.sel.y() * s), int(self.sel.width() * s), int(self.sel.height() * s))
             p.drawPixmap(r, QPixmap.fromImage(self.image.copy(self.sel)).scaled(r.size()))
-            p.setPen(QPen(QColor("#4fc3f7"), 2))
+            from . import theme
+            p.setPen(QPen(theme.qcolor("focus"), 2))
             p.drawRect(r)
             p.end()
         self.setPixmap(pm)
@@ -113,11 +114,11 @@ class OcrDialog(QDialog):
         for i in range(5):
             self.cam_combo.addItem(f"카메라 {i}", i)
         self.cam_combo.setCurrentIndex(min(camera_index, 4))
-        self.b_live = QPushButton("▶ 카메라 켜기")
-        self.b_shot = QPushButton("📷 촬영")
+        self.b_live = QPushButton("카메라 켜기")
+        self.b_shot = QPushButton("촬영")
         self.b_shot.setEnabled(False)
         self.b_file = QPushButton("사진 파일 열기…")
-        self.b_rot = QPushButton("⟳ 90°")
+        self.b_rot = QPushButton("90° 회전")
         cam_row.addWidget(self.cam_combo); cam_row.addWidget(self.b_live); cam_row.addWidget(self.b_shot)
         cam_row.addStretch(); cam_row.addWidget(self.b_file); cam_row.addWidget(self.b_rot)
         ll.addLayout(cam_row)
@@ -128,8 +129,8 @@ class OcrDialog(QDialog):
         ll.addWidget(self.view, 1)
         ocr_row = QHBoxLayout()
         self.sel_hint = QLabel("촬영 후 트랙 목록 부분을 마우스로 드래그하면 그 영역만 인식합니다.")
-        self.sel_hint.setStyleSheet("color:#777")
-        self.b_ocr = QPushButton("🔍 문자 인식")
+        self.sel_hint.setProperty("role", "muted")
+        self.b_ocr = QPushButton("문자 인식")
         self.b_ocr.setEnabled(False)
         ocr_row.addWidget(self.sel_hint, 1); ocr_row.addWidget(self.b_ocr)
         ll.addLayout(ocr_row)
@@ -164,6 +165,8 @@ class OcrDialog(QDialog):
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("트랙에 적용")
+        bb.button(QDialogButtonBox.Ok).setProperty("variant", "primary")
+        bb.button(QDialogButtonBox.Cancel).setText("취소")
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         self.status = QLabel()
@@ -204,7 +207,7 @@ class OcrDialog(QDialog):
         cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
         self.cap = cap
         self.view.selectable = False
-        self.b_live.setText("■ 카메라 끄기")
+        self.b_live.setText("카메라 끄기")
         self.b_shot.setEnabled(True)
         self.timer.start()
 
@@ -213,7 +216,7 @@ class OcrDialog(QDialog):
         if self.cap:
             self.cap.release()
         self.cap = None
-        self.b_live.setText("▶ 카메라 켜기")
+        self.b_live.setText("카메라 켜기")
         self.b_shot.setEnabled(False)
 
     def _grab(self):

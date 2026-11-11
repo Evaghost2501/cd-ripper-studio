@@ -15,6 +15,7 @@ def win(tmp_path, monkeypatch):
     from cdripper.core.toc import Toc  # noqa: F401
     from cdripper.gui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "lookup_disc", lambda self, manual=False: None)
+    monkeypatch.setattr(mw.MainWindow, "load_disc", lambda self: None)   # disc is loaded by the test itself
     w = mw.MainWindow()
     d = w.drive()
     w._disc_loaded((d.read_toc(), {}))

@@ -48,10 +48,16 @@ def main():
     app.setApplicationName("CD Ripper Studio")
     app.setStyle("Fusion")
     from .core.settings import Settings
-    pt = max(7, min(32, Settings.load().font_pt))
-    font = QFont("Malgun Gothic") if sys.platform == "win32" else app.font()
-    font.setPointSize(pt)
+    from .gui import theme
+    settings = Settings.load()
+    pt = max(7, min(32, settings.font_pt))
+    if theme.load_fonts():                  # Purple Green Flux: Pretendard + JetBrains Mono (bundled)
+        font = theme.ui_font(pt)
+    else:
+        font = QFont("Malgun Gothic") if sys.platform == "win32" else app.font()
+        font.setPointSize(pt)
     app.setFont(font)
+    theme.apply(settings.theme)
     icon = os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(__file__))), "assets", "icon.ico")
     if os.path.exists(icon):
         app.setWindowIcon(QIcon(icon))

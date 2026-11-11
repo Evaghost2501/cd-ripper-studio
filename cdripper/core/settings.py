@@ -53,6 +53,7 @@ class Settings:
     ocr_lang: str = "ko"
     camera_index: int = 0
     last_drive: str = ""
+    theme: str = "dark"                  # Purple Green Flux: "dark" = Night (default), "light" = Day
     font_pt: int = 18                    # UI font size (2x the original 9 pt)
     cover_music_sources: bool = False
     hidden_columns: list = field(default_factory=lambda: ["lyricist", "isrc"])

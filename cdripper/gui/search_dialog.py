@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout
 from ..core.metadata import AlbumMeta
 from ..core.toc import Toc
 from ..sources import web
+from . import theme
 from .util import fit_to_screen, pixmap_from_bytes, px, run_async
 
 
@@ -30,7 +31,7 @@ class SearchDialog(QDialog):
         row = QHBoxLayout()
         self.artist = QLineEdit(artist, placeholderText="아티스트 / 저자")
         self.album = QLineEdit(album, placeholderText="앨범 / 도서 제목")
-        self.btn = QPushButton("🔍 검색")
+        self.btn = QPushButton("검색")
         self.btn.setDefault(True)
         row.addWidget(QLabel("아티스트·저자")); row.addWidget(self.artist, 2)
         row.addWidget(QLabel("앨범·도서")); row.addWidget(self.album, 3)
@@ -62,7 +63,7 @@ class SearchDialog(QDialog):
         sl = QVBoxLayout(side)
         self.cover = QLabel(alignment=Qt.AlignCenter)
         self.cover.setFixedSize(px(200), px(200))
-        self.cover.setStyleSheet("border:1px solid #888;")
+        self.cover.setProperty("role", "cover")
         self.tracks = QListWidget()
         sl.addWidget(self.cover, alignment=Qt.AlignHCenter)
         sl.addWidget(self.tracks)
@@ -74,6 +75,8 @@ class SearchDialog(QDialog):
         lay.addWidget(self.status)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("이 정보 적용")
+        bb.button(QDialogButtonBox.Ok).setProperty("variant", "primary")
+        bb.button(QDialogButtonBox.Cancel).setText("취소")
         bb.accepted.connect(self._accept)
         bb.rejected.connect(self.reject)
         self.ok_btn = bb.button(QDialogButtonBox.Ok)
@@ -121,13 +124,13 @@ class SearchDialog(QDialog):
         for r, a in enumerate(results):
             book = getattr(a, "_is_book", False)
             match = n and not book and len(a.tracks) == n
-            vals = [a.source, a.albumartist, a.album, a.date, "📖 도서" if book else str(len(a.tracks)),
+            vals = [a.source, a.albumartist, a.album, a.date, "도서" if book else str(len(a.tracks)),
                     a.label if book else
-                    ("✔ 트랙 수 일치" if match else "") + (" 디스크 ID 일치" if a.mb_discid else "")]
+                    ("트랙 수 일치" if match else "") + (" 디스크 ID 일치" if a.mb_discid else "")]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 if match:
-                    it.setForeground(QBrush(QColor("#2e7d32")))
+                    it.setForeground(theme.qcolor("mint-text"))
                 self.table.setItem(r, c, it)
         self.table.resizeColumnsToContents()
         msg = f"{len(results)}개 결과"
