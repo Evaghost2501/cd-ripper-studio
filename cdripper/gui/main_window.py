@@ -27,7 +27,7 @@ from .ocr_dialog import OcrDialog
 from .search_dialog import SearchDialog
 from .settings_dialog import SettingsDialog
 from .util import fit_to_screen, image_size, pixmap_from_bytes, px, run_async, ui_scale
-from .widgets import TitlePresetBar, apply_title_to_table
+from .widgets import CoverLabel, TitlePresetBar, apply_title_to_table
 
 COLS = [("rip", "✔"), ("number", "#"), ("title", "제목"), ("artist", "아티스트"), ("composer", "작곡"),
         ("lyricist", "작사"), ("isrc", "ISRC"), ("length", "길이"), ("status", "상태")]
@@ -186,8 +186,7 @@ class MainWindow(QMainWindow):
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QScrollArea.NoFrame)
         self.left_scroll = left_scroll
-        self.cover_lbl = QLabel("커버 없음\n끌어다 놓기", alignment=Qt.AlignCenter)
-        self.cover_lbl.setFixedSize(170, 170)
+        self.cover_lbl = CoverLabel("커버 없음\n끌어다 놓기", min_side=170, max_side=px(220))
         self.cover_lbl.setStyleSheet("border:1px dashed #999; color:#888;")
         self.cover_lbl.setAcceptDrops(True)
         self.setAcceptDrops(True)
@@ -200,13 +199,19 @@ class MainWindow(QMainWindow):
         cover_col.addWidget(self.cover_info)
         cover_row.addLayout(cover_col)
         cr = QVBoxLayout()
+        cover_btns = []
         for text, fn in (("🔍 찾기", self.find_cover), ("📂 파일", self.cover_from_file),
                          ("📋 붙여넣기", self.cover_from_clipboard), ("✖ 삭제", lambda: self.set_cover(None))):
             b = QPushButton(text)
             b.clicked.connect(fn)
+            cover_btns.append(b)
             cr.addWidget(b)
+        btn_w = max(b.sizeHint().width() for b in cover_btns)     # compact, all the same width
+        for b in cover_btns:
+            b.setFixedWidth(btn_w)
         cr.addStretch()
-        cover_row.addLayout(cr, 1)
+        cover_row.setStretch(0, 1)                               # the cover gets the spare width
+        cover_row.addLayout(cr, 0)
         ll.addLayout(cover_row)
 
         g = QGroupBox("앨범 정보")
@@ -785,12 +790,11 @@ class MainWindow(QMainWindow):
     def set_cover(self, data: bytes | None):
         self.cover = data
         if data:
-            self.cover_lbl.setPixmap(pixmap_from_bytes(data, 168))
+            self.cover_lbl.set_image(data)
             w, h = image_size(data)
             self.cover_info.setText(f"{w}×{h}  ·  {len(data) // 1024} KB")
         else:
-            self.cover_lbl.setPixmap(pixmap_from_bytes(None))
-            self.cover_lbl.setText("커버 없음\n끌어다 놓기")
+            self.cover_lbl.set_image(None, "커버 없음\n끌어다 놓기")
             self.cover_info.setText("")
 
     def find_cover(self):

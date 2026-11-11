@@ -141,3 +141,47 @@ def apply_title_to_table(table, title_col: int, title: str) -> list[int]:
         table.setCurrentCell(nxt, title_col)
         table.selectRow(nxt)
     return rows
+
+
+class CoverLabel(QLabel):
+    """Square cover preview that takes the width it is given (between min and max) and
+    rescales the image whenever its size changes."""
+
+    def __init__(self, text: str = "", min_side: int = 170, max_side: int = 360):
+        super().__init__(text)
+        self.setAlignment(Qt.AlignCenter)
+        self._data: bytes | None = None
+        self.setMinimumSize(min_side, min_side)
+        self.setMaximumSize(max_side, max_side)
+        sp = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        return max(self.minimumWidth(), min(w, self.maximumWidth()))
+
+    def sizeHint(self):
+        return QSize(self.maximumWidth(), self.maximumWidth())
+
+    def set_image(self, data: bytes | None, empty_text: str = ""):
+        self._data = data
+        if data:
+            self.setText("")
+            self._rescale()
+        else:
+            self.clear()
+            self.setText(empty_text)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.height() != self.width():
+            self.setFixedHeight(max(self.minimumWidth(), min(self.width(), self.maximumWidth())))
+        self._rescale()
+
+    def _rescale(self):
+        if self._data:
+            from .util import pixmap_from_bytes
+            self.setPixmap(pixmap_from_bytes(self._data, min(self.width(), self.height()) - 2))
