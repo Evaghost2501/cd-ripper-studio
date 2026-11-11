@@ -179,11 +179,13 @@ class CoverLabel(QLabel):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if self.height() != self.width():
-            self.setFixedHeight(max(self.minimumWidth(), min(self.width(), self.maximumWidth())))
         self._rescale()
 
     def _rescale(self):
+        """Fit the whole image inside the frame (no cropping, no distortion)."""
         if self._data:
-            from .util import pixmap_from_bytes
-            self.setPixmap(pixmap_from_bytes(self._data, min(self.width(), self.height()) - 2))
+            from PySide6.QtGui import QImage, QPixmap
+            img = QImage.fromData(self._data)
+            if not img.isNull():
+                self.setPixmap(QPixmap.fromImage(img).scaled(max(1, self.width() - 2), max(1, self.height() - 2),
+                                                             Qt.KeepAspectRatio, Qt.SmoothTransformation))

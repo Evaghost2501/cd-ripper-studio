@@ -93,7 +93,7 @@ class ImageView(QLabel):
 
 class OcrDialog(QDialog):
     def __init__(self, parent, n_tracks: int, camera_index: int = 0, engine: str = "auto", lang: str = "ko",
-                 presets: list[str] | None = None, on_presets_edited=None):
+                 presets: list[str] | None = None, on_presets_edited=None, autostart_camera: bool = False):
         super().__init__(parent)
         self.setWindowTitle("웹캠으로 트랙 목록 인식")
         fit_to_screen(self, 1250, 760)
@@ -176,7 +176,7 @@ class OcrDialog(QDialog):
         lay.addLayout(bl)
 
         self.timer = QTimer(self, interval=40, timeout=self._grab)
-        self.b_live.clicked.connect(self.toggle_camera)
+        self.b_live.clicked.connect(lambda: self.toggle_camera())
         self.b_shot.clicked.connect(self.snapshot)
         self.b_file.clicked.connect(self.open_file)
         self.b_rot.clicked.connect(self.rotate)
@@ -185,23 +185,35 @@ class OcrDialog(QDialog):
         self.split_artist.toggled.connect(self.reparse)
         self.reparse()
 
+        if autostart_camera:          # open with the camera already running (after the window appears)
+            QTimer.singleShot(150, lambda: self.cap is None and self.view.image is None and
+                              self.toggle_camera(quiet=True))
+
         engines = ocr.available_engines()
         self.status.setText("OCR 엔진: " + (", ".join(engines) if engines else
                                            "없음 — 텍스트를 직접 붙여넣어 사용할 수 있습니다"))
 
     # ---- camera ---------------------------------------------------------
-    def toggle_camera(self):
+    def toggle_camera(self, quiet: bool = False):
+        """quiet=True (automatic start): report problems in the status line instead of a pop-up."""
         if self.cap:
             return self.stop_camera()
+
+        def fail(msg):
+            if quiet:
+                self.view.setText(msg + "\n\n'카메라 켜기'로 다시 시도하거나 '사진 파일 열기'를 쓰세요.")
+                return None
+            return QMessageBox.warning(self, "카메라", msg)
         try:
             import cv2
         except ImportError:
-            return QMessageBox.warning(self, "카메라", "OpenCV(opencv-python)가 설치되어 있지 않습니다.")
+            return fail("OpenCV(opencv-python)가 설치되어 있지 않습니다.")
         idx = self.cam_combo.currentData()
         api = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        self.view.setText("카메라 켜는 중…")
         cap = cv2.VideoCapture(idx, api)
         if not cap.isOpened():
-            return QMessageBox.warning(self, "카메라", f"카메라 {idx}를 열 수 없습니다.")
+            return fail(f"카메라 {idx}를 열 수 없습니다.")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
         cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)

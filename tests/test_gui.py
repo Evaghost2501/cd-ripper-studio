@@ -280,3 +280,62 @@ def test_quick_title_in_webcam_dialog():
         dlg2._quick_title(t)
     dlg2._accept()
     assert dlg2.n_tracks == 3 and [dlg2.result[i]["title"] for i in (1, 2, 3)] == ["Story Song", "Melody", "Story Song"]
+
+
+def test_progress_bar_aligned_with_track_list(win):
+    w, app, _ = win
+    from PySide6.QtTest import QTest
+    X = lambda o: o.mapTo(w, o.rect().topLeft()).x()   # noqa: E731
+    w.resize(1500, 900); w.show(); QTest.qWait(200)
+    assert X(w.progress) == X(w.table)
+    w.split.setSizes([w.left_scroll.minimumWidth() + 150, 900]); QTest.qWait(200)
+    assert X(w.progress) == X(w.table)                         # follows the column border
+    assert X(w.rip_btn) + w.rip_btn.width() == X(w.table) + w.table.width()
+
+
+def test_cover_fills_column_and_album_panel_does_not_overflow(win):
+    w, app, _ = win
+    from PySide6.QtTest import QTest
+    w.resize(1500, 640); w.show(); QTest.qWait(200)         # short window: height limits the cover
+    sc = w.left_scroll
+    m = sc.widget().layout().contentsMargins()
+    assert w.cover_lbl.width() == sc.viewport().width() - m.left() - m.right()   # full column width
+    assert sc.widget().width() <= sc.viewport().width()          # nothing cut off on the right
+    h1 = w.cover_lbl.height()
+    w.resize(1500, 900); QTest.qWait(200)
+    assert w.cover_lbl.height() > h1                             # grows with the window
+    assert w.cover_lbl.height() <= w.cover_lbl.width()           # never taller than wide
+
+
+def test_webcam_dialog_starts_camera_without_popups(monkeypatch):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QMessageBox
+    from cdripper.gui import ocr_dialog
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: (_ for _ in ()).throw(AssertionError("popup")))
+    started = []
+    monkeypatch.setattr(ocr_dialog.OcrDialog, "toggle_camera",
+                        lambda self, quiet=False: started.append(quiet))
+    dlg = ocr_dialog.OcrDialog(None, 4, autostart_camera=True)
+    dlg.show(); QTest.qWait(400)
+    assert started == [True]                                     # camera started by itself, quietly
+    dlg2 = ocr_dialog.OcrDialog(None, 4)
+    dlg2.show(); QTest.qWait(300)
+    assert started == [True]                                     # default: no auto start
+
+
+def test_webcam_quiet_failure_shows_message_in_view(monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from cdripper.gui import ocr_dialog
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: (_ for _ in ()).throw(AssertionError("popup")))
+
+    class NoCam:
+        CAP_DSHOW = CAP_ANY = CAP_PROP_FRAME_WIDTH = CAP_PROP_FRAME_HEIGHT = CAP_PROP_AUTOFOCUS = 0
+
+        class VideoCapture:
+            def __init__(self, *a): pass
+            def isOpened(self): return False
+    import sys
+    monkeypatch.setitem(sys.modules, "cv2", NoCam)
+    dlg = ocr_dialog.OcrDialog(None, 4)
+    dlg.toggle_camera(quiet=True)
+    assert "열 수 없습니다" in dlg.view.text() and dlg.cap is None

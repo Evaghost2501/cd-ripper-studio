@@ -39,6 +39,24 @@ DEFAULT_COL_WIDTHS = {"rip": 30, "number": 34, "title": 230, "artist": 150, "com
                       "isrc": 100, "length": 48}
 
 
+class _CardTitleInfo:
+    """Looks like a QLabel to the rest of the code but writes into a card's title:
+    setText("4트랙 · 1:10") → "앨범 정보 · 4트랙 · 1:10" (saves a row in the album panel)."""
+
+    def __init__(self, box, base: str):
+        self.box, self.base, self._text = box, base, ""
+
+    def setText(self, text: str):
+        self._text = text or ""
+        self.box.setTitle(f"{self.base} · {self._text}" if self._text else self.base)
+
+    def text(self) -> str:
+        return self._text
+
+    def setToolTip(self, tip: str):
+        self.box.setToolTip(tip)
+
+
 class RipThread(QThread):
     progress = Signal(int, float, str)
     track_done = Signal(object)
@@ -202,31 +220,25 @@ class MainWindow(QMainWindow):
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QScrollArea.NoFrame)
         self.left_scroll = left_scroll
-        left_scroll.viewport().installEventFilter(self)       # re-fit the cover when the height changes
-        self.cover_lbl = CoverLabel("커버 없음\n끌어다 놓기", min_side=170, max_side=px(220))
+        left_scroll.viewport().installEventFilter(self)       # re-fit the cover when the size changes
+        left_scroll.installEventFilter(self)                  # keep the bottom bar aligned with the columns
+        self.cover_lbl = CoverLabel("커버 없음\n끌어다 놓기", min_side=120, max_side=4000)
         self.cover_lbl.setProperty("role", "cover")
         self.cover_lbl.setAcceptDrops(True)
         self.setAcceptDrops(True)
-        # cover on the left, its buttons stacked on the right (saves vertical space)
-        cover_row = QHBoxLayout()
-        cover_row.addWidget(self.cover_lbl)                     # image size is shown in its tooltip
-        cr = QGridLayout()                                       # 2×2 buttons: low, so the form fits
-        cover_btns = []
+        # cover at the top filling the column (size follows the window), buttons in 2 columns under it
+        ll.addWidget(self.cover_lbl)                            # image size is shown in its tooltip
+        cr = QGridLayout()
         for i, (text, fn) in enumerate((("찾기", self.find_cover), ("파일", self.cover_from_file),
                                         ("붙여넣기", self.cover_from_clipboard),
                                         ("삭제", lambda: self.set_cover(None)))):
             b = QPushButton(text)
             b.clicked.connect(fn)
-            cover_btns.append(b)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             cr.addWidget(b, i // 2, i % 2)
-        btn_w = max(b.sizeHint().width() for b in cover_btns)     # compact, all the same width
-        for b in cover_btns:
-            b.setFixedWidth(btn_w)
-        cr.setRowStretch(2, 1)
         self._cover_btn_grid = cr
-        cover_row.addLayout(cr, 0)
-        cover_row.addStretch(1)                                  # cover + buttons stay together on the left
-        ll.addLayout(cover_row)
+        ll.addLayout(cr)
+        ll.addStretch(1)                                         # album info is pushed to the bottom
 
         g = QGroupBox("앨범 정보")
         form = QFormLayout(g)
@@ -259,16 +271,22 @@ class MainWindow(QMainWindow):
                     row.addWidget(b)
                 form.addRow(label, row)
                 continue
-            if key == "disc":            # "디스크  [1] / [1]" — shares the row with totaldiscs
+            if key == "date":            # "발매일 [....]  디스크 [1] / [1]" on one row
                 self._disc_row = QHBoxLayout()
-                self._disc_row.addWidget(e)
-                form.addRow("디스크", self._disc_row)
+                self._disc_row.addWidget(e, 3)
+                form.addRow(label, self._disc_row)
+                continue
+            if key == "disc":
+                dl = QLabel(" 디스크")
+                dl.setProperty("role", "muted")
+                self._disc_row.addWidget(dl)
+                self._disc_row.addWidget(e, 1)
                 continue
             if key == "totaldiscs":
                 slash = QLabel("/")
                 slash.setProperty("role", "muted")
                 self._disc_row.addWidget(slash)
-                self._disc_row.addWidget(e)
+                self._disc_row.addWidget(e, 1)
                 e.setToolTip("총 디스크 수")
                 self.album_edits["disc"].setToolTip("디스크 번호")
                 continue
@@ -287,12 +305,9 @@ class MainWindow(QMainWindow):
         checks.addWidget(self.auto_fill)
         checks.addStretch()
         form.addRow(checks)
-        self.disc_info = QLabel()
-        self.disc_info.setProperty("role", "muted")
-        self.disc_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        form.addRow(self.disc_info)
+        self.album_box = g
+        self.disc_info = _CardTitleInfo(g, "앨범 정보")   # "4트랙 · 1:10" goes into the card title
         ll.addWidget(g)
-        ll.addStretch()
         split.addWidget(left_scroll)
 
         # ---- track table ------------------------------------------------
@@ -348,6 +363,8 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         self.split, self.right = split, right
+        right.installEventFilter(self)
+        split.splitterMoved.connect(lambda *_: self._align_bottom())
 
         # ---- output panel ------------------------------------------------
         og = QGroupBox("출력")
@@ -402,19 +419,21 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)     # % is shown in the status line (mono)
         self.status = QLabel("준비")
-        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.status.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)   # width set by _align_bottom
+        self.status.setMinimumWidth(0)
         self.rip_btn = QPushButton("리핑 시작")
         self.rip_btn.setProperty("variant", "primary")      # the one primary action of the window
         self.rip_btn.clicked.connect(self.start_or_cancel)
-        bottom.addWidget(self.status, 2)
-        bottom.addWidget(self.progress, 3)
+        bottom.addWidget(self.status)                 # width = album column (see _align_bottom)
+        bottom.addWidget(self.progress, 1)            # = track list width, minus the rip button
         bottom.addWidget(self.rip_btn)
+        self._bottom_row = bottom
         root.addLayout(bottom)
         self.logbox = QPlainTextEdit(readOnly=True, maximumBlockCount=2000)
         self.logbox.setProperty("role", "log")
         root.addWidget(self.logbox)
         self._apply_scale()
-        split.setSizes([px(300), px(1000)])
+        split.setSizes([max(px(300), self.left_scroll.minimumWidth()), px(1000)])
 
         idx = self.fmt.findData(self.s.format)
         self.fmt.setCurrentIndex(max(idx, 0))
@@ -425,8 +444,10 @@ class MainWindow(QMainWindow):
         """(Re)apply every size that depends on the font size."""
         self.drive_combo.setMinimumWidth(px(140))
         self.ui_slider.setFixedWidth(px(110))
-        self.left_scroll.setMinimumWidth(px(260))
-        self.left_scroll.setMaximumWidth(px(400))
+        # the album column is never narrower than its content (otherwise the card's right edge is cut)
+        inner_min = self.left_scroll.widget().minimumSizeHint().width() + px(14)
+        self.left_scroll.setMinimumWidth(max(px(260), inner_min))
+        self.left_scroll.setMaximumWidth(px(560))     # wider column → bigger cover
         hh = self.table.horizontalHeader()
         hh.setMinimumSectionSize(px(28))
         widths = {**DEFAULT_COL_WIDTHS, **self.s.column_widths}
@@ -468,8 +489,11 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, ev):
         from PySide6.QtCore import QEvent
-        if ev.type() == QEvent.Resize and hasattr(self, "left_scroll") and obj is self.left_scroll.viewport():
-            QTimer.singleShot(0, self._fit_cover)
+        if ev.type() == QEvent.Resize and hasattr(self, "left_scroll"):
+            if obj is self.left_scroll.viewport():
+                QTimer.singleShot(0, self._fit_cover)
+            elif obj is self.left_scroll or obj is getattr(self, "right", None):
+                QTimer.singleShot(0, self._align_bottom)
         return super().eventFilter(obj, ev)
 
     def _fit_cover(self):
@@ -478,14 +502,27 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "left_scroll"):
             return
         lbl = self.cover_lbl
-        avail = self.left_scroll.viewport().height()
-        content = self.left_scroll.widget().sizeHint().height()
-        others = content - lbl.height()                     # everything except the cover
-        # as tall as the form leaves free, and as wide as the column leaves next to the buttons
-        room_w = self.left_scroll.viewport().width() - self._cover_btn_grid.sizeHint().width() - px(28)
-        side = max(120, min(px(220), avail - others - px(8), room_w))
-        if side != lbl.width() or side != lbl.height():
-            lbl.setFixedSize(side, side)
+        vp = self.left_scroll.viewport()
+        m = self.left_scroll.widget().layout().contentsMargins()
+        content = self.left_scroll.widget().minimumSizeHint().height()
+        others = content - lbl.minimumHeight()              # buttons + album info + spacing
+        # frame = full column width; height = what the buttons and album info leave free
+        # (never taller than it is wide); the image is fitted inside without distortion
+        w = max(120, vp.width() - m.left() - m.right())
+        h = max(120, min(w, vp.height() - others - px(4)))
+        if (w, h) != (lbl.width(), lbl.height()):
+            lbl.setFixedSize(w, h)
+
+    def _align_bottom(self):
+        """Status text sits under the album column; the progress bar starts exactly where the
+        track list starts and grows/shrinks with it."""
+        if hasattr(self, "status") and hasattr(self, "split"):
+            from PySide6.QtCore import QPoint
+            cw = self.centralWidget()
+            right_x = self.right.mapTo(cw, QPoint(0, 0)).x()          # where the track list starts
+            left_x = cw.layout().contentsMargins().left()
+            self.status.setFixedWidth(max(0, right_x - left_x - self._bottom_row.spacing()))
+            self._bottom_row.invalidate()
 
     def _ui_slider_moved(self, v, apply=True):
         self.ui_size_lbl.setText(f" {v} ")
@@ -665,7 +702,7 @@ class MainWindow(QMainWindow):
 
     def _disc_failed(self, e):
         self.status.setText("디스크 없음")
-        self.disc_info.setText("오디오 CD를 넣어주세요.")
+        self.disc_info.setText("CD 없음")
         self.log(e)
 
     def _disc_loaded(self, res):
@@ -831,7 +868,8 @@ class MainWindow(QMainWindow):
     def ocr_tracks(self):
         n = len(self.album.tracks)      # 0 = no CD yet → track count follows the recognised list
         dlg = OcrDialog(self, n, self.s.camera_index, self.s.ocr_engine, self.s.ocr_lang,
-                        presets=self.s.title_presets, on_presets_edited=self._title_presets_edited)
+                        presets=self.s.title_presets, on_presets_edited=self._title_presets_edited,
+                        autostart_camera=True)
         ok = dlg.exec()
         self.title_bar.set_presets(self.s.title_presets)      # may have been edited in the dialog
         if ok:
