@@ -118,3 +118,25 @@ def test_label_preset_button(tmp_path, monkeypatch):
     btn.click()
     assert w.album.label == "JYbooks" and w.album_edits["label"].text() == "JYbooks"
     w.close()
+
+
+def test_book_author_goes_to_album_artist_author_and_tracks(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("CDRIPPER_FAKE", "1")
+    from cdripper.gui import main_window as mw
+    monkeypatch.setattr(mw.MainWindow, "lookup_disc", lambda self, manual=False: None)
+    monkeypatch.setattr(mw.MainWindow, "load_disc", lambda self: None)
+    w = mw.MainWindow()
+    d = w.drive()
+    w._disc_loaded((d.read_toc(), {}))
+    # something was typed before (auto-filled into the tracks); one track has its own artist
+    w.album_edits["albumartist"].setText("Unknown"); w._album_edited("albumartist", "Unknown")
+    w.album.tracks[3].artist = "Guest Singer"
+    book = books.parse_yes24(YES24_HTML)[0]                 # 생텍쥐페리 / 어린 왕자
+    w._fill_empty_only = True                               # even in "fill blanks only" mode
+    w._lookup_done([book])
+    assert w.album.albumartist == "생텍쥐페리"
+    assert w.album_edits["albumartist"].text() == "생텍쥐페리"
+    assert w._albumartist_label.text() == "앨범 아티스트 · 작가"   # genre switched to Audiobook
+    assert [t.artist for t in w.album.tracks] == ["생텍쥐페리"] * 3 + ["Guest Singer"]
+    w.close()

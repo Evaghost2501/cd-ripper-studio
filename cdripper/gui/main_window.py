@@ -807,6 +807,7 @@ class MainWindow(QMainWindow):
         """replace: overwrite everything · fill_empty: only fill blank fields (keeps what the user entered)
         · default: non-empty values from `a` win."""
         cur = self.album
+        old_albumartist = cur.albumartist
 
         def take(old, new):
             if fill_empty:
@@ -846,6 +847,15 @@ class MainWindow(QMainWindow):
                 t.rip, t.rip_user = src.rip, src.rip_user
         if not cur.tracks:   # no disc: take tracks as they are
             cur.tracks = [TrackMeta(**{**t.__dict__}) for t in a.tracks]
+        if getattr(a, "_is_book", False):
+            cur.genre = "Audiobook"                           # a book result means an audiobook
+        if getattr(a, "_is_book", False) and a.albumartist.strip():
+            # a book was chosen: its author always becomes album artist · author, and the track
+            # artists (shown as "Author" in audiobook apps) follow — except tracks with their own artist
+            cur.albumartist = a.albumartist.strip()
+            for t in cur.tracks:
+                if t.artist in ("", old_albumartist) or replace:
+                    t.artist = cur.albumartist
         self.refresh_all()
         if a.cover_url and not self.cover:
             run_async(self._fetch_best_cover, a, on_done=lambda d: d and not self.cover and self.set_cover(d),
