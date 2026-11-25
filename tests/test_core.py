@@ -206,3 +206,31 @@ def test_not_ready_waits_for_spin_up():
 def test_error_text_korean():
     from cdripper.core.drive import describe_error
     assert "끊겼" in describe_error(55) and "[코드 55]" in describe_error(55)
+
+
+@pytest.mark.parametrize("fmt,quality", [("mp3", "cbr320"), ("flac", "8"), ("aac", "256")])
+def test_audiobook_author_written_as_album_artist_artist_and_author(tmp_path, fmt, quality):
+    from cdripper.core import encoders
+    from cdripper.core.job import RipJob
+    from cdripper.core.settings import Settings
+    import mutagen
+    if encoders.FORMAT_BY_KEY[fmt].needs_ffmpeg and not encoders.find_ffmpeg():
+        pytest.skip("ffmpeg missing")
+    d = FakeDrive()
+    toc = d.read_toc()
+    for genre, want_author in (("Audiobook", True), ("Music", False)):
+        album = AlbumMeta(albumartist="Max Grover", album=f"Zucchini {genre}", genre=genre,
+                          tracks=[TrackMeta(1, title="Story Song", length=toc.tracks[0].length)])
+        s = Settings(output_dir=str(tmp_path), format=fmt, quality=quality, accuraterip=False, secure_mode=False)
+        [rep] = RipJob(d, toc, album, None, s, on_log=lambda m: None).run().tracks
+        f = mutagen.File(rep.path)
+        if fmt == "mp3":
+            aa, ar = str(f.tags["TPE2"]), str(f.tags["TPE1"])
+            au = [str(x) for x in f.tags.getall("TXXX:AUTHOR")]
+        elif fmt == "flac":
+            aa, ar, au = f["ALBUMARTIST"][0], f["ARTIST"][0], f.get("AUTHOR", [])
+        else:
+            aa, ar = f["aART"][0], f["\xa9ART"][0]
+            au = [bytes(x).decode() for x in f.get("----:com.apple.iTunes:AUTHOR", [])]
+        assert aa == "Max Grover" and ar == "Max Grover"          # album artist + artist
+        assert (au == ["Max Grover"]) if want_author else (au == [])

@@ -357,3 +357,12 @@ def test_cover_fit_settles_without_looping(win):
         assert len(calls) - n <= 2
     finally:
         type(w)._fit_cover = orig
+
+
+def test_album_artist_label_says_author_for_audiobooks(win):
+    w, app, _ = win
+    w.genre_btns["Music"].click()
+    assert w._albumartist_label.text() == "앨범 아티스트"
+    w.genre_btns["Audiobook"].click()
+    assert w._albumartist_label.text() == "앨범 아티스트 · 작가"
+    assert "작가" in w.album_edits["albumartist"].toolTip()

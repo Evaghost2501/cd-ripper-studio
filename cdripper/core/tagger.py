@@ -42,6 +42,12 @@ def write_tags(path: str, fmt: str, album: AlbumMeta, track: TrackMeta,
     # wav: no tags (keeps maximum compatibility)
 
 
+def author(album: AlbumMeta) -> str:
+    """Audiobooks: the album artist is the book's author. Written as Album Artist, as Artist (the
+    field audiobook apps show as "Author") and as an explicit AUTHOR tag."""
+    return album.albumartist.strip() if album.genre == "Audiobook" else ""
+
+
 def _id3(path, album, track, v, cover, v23):
     from mutagen.id3 import (APIC, COMM, ID3, TALB, TCOM, TCON, TDRC, TEXT, TIT2, TPE1, TPE2, TPOS,
                              TPUB, TRCK, TSRC, TXXX, USLT, TCMP, UFID)
@@ -71,7 +77,8 @@ def _id3(path, album, track, v, cover, v23):
         tags.add(COMM(encoding=3, lang="kor", desc="", text=comment))
     if track.lyrics:
         tags.add(USLT(encoding=3, lang="kor", desc="", text=track.lyrics))
-    for desc, val in (("MusicBrainz Album Id", album.mb_release_id),
+    for desc, val in (("AUTHOR", author(album)),
+                      ("MusicBrainz Album Id", album.mb_release_id),
                       ("MusicBrainz Release Group Id", album.mb_releasegroup_id),
                       ("MusicBrainz Disc Id", album.mb_discid)):
         if val:
@@ -99,7 +106,7 @@ def _vorbis(path, fmt, album, track, v, cover):
         "TRACKNUMBER": str(v["track"]), "TRACKTOTAL": str(v["totaltracks"]),
         "DISCNUMBER": str(v["disc"]), "DISCTOTAL": str(v["totaldiscs"]), "DATE": album.date,
         "GENRE": v["genre"], "COMPOSER": track.composer, "LYRICIST": track.lyricist, "LABEL": album.label,
-        "ISRC": track.isrc,
+        "ISRC": track.isrc, "AUTHOR": author(album),
         "COMMENT": track.comment or album.comment, "LYRICS": track.lyrics,
         "COMPILATION": "1" if album.compilation else "",
         "MUSICBRAINZ_ALBUMID": album.mb_release_id, "MUSICBRAINZ_RELEASEGROUPID": album.mb_releasegroup_id,
@@ -137,7 +144,7 @@ def _mp4(path, album, track, v, cover):
             t[key] = val
     if album.compilation:
         t["cpil"] = True
-    for name, val in (("LABEL", album.label), ("ISRC", track.isrc),
+    for name, val in (("LABEL", album.label), ("ISRC", track.isrc), ("AUTHOR", author(album)),
                       ("MusicBrainz Album Id", album.mb_release_id)):
         if val:
             t[f"----:com.apple.iTunes:{name}"] = [MP4FreeForm(val.encode())]

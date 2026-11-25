@@ -293,6 +293,8 @@ class MainWindow(QMainWindow):
                 self.album_edits["disc"].setToolTip("디스크 번호")
                 continue
             form.addRow(label, e)
+            if key == "albumartist":
+                self._albumartist_label = form.labelForField(e)
         self.album_edits["date"].setPlaceholderText("YYYY 또는 YYYY-MM-DD")
         checks = QHBoxLayout()                                   # both options on one row
         self.compilation = QCheckBox("컴필레이션")
@@ -605,6 +607,7 @@ class MainWindow(QMainWindow):
     def _genre_chosen(self, name):
         self.album.genre = name
         self.s.genre = name          # becomes the default for the next CD
+        self._sync_author_label()
         self._save_soon()
         self._update_preview()
 
@@ -614,6 +617,19 @@ class MainWindow(QMainWindow):
         for name, b in self.genre_btns.items():
             b.setChecked(name == g)
         self.genre_group.setExclusive(True)
+        self._sync_author_label()
+
+    def _sync_author_label(self):
+        """Audiobook: the album artist field is also the author (저자/작가)."""
+        lbl = getattr(self, "_albumartist_label", None)
+        if lbl is None:
+            return
+        book = self.album.genre == "Audiobook"
+        lbl.setText("앨범 아티스트 · 작가" if book else "앨범 아티스트")
+        tip = ("오디오북: 여기 쓴 이름이 앨범 아티스트와 작가(Author) 둘 다로 저장됩니다.\n"
+               "파일에는 Album Artist · Artist · AUTHOR 태그로 들어가 오디오북 앱에서 작가로 보입니다.") if book else ""
+        lbl.setToolTip(tip)
+        self.album_edits["albumartist"].setToolTip(tip)
 
     def _album_folder_toggled(self, on):
         self.s.album_folder = on
