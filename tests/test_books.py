@@ -114,7 +114,7 @@ def test_label_preset_button(tmp_path, monkeypatch):
     from cdripper.gui import main_window as mw
     monkeypatch.setattr(mw.MainWindow, "lookup_disc", lambda self, manual=False: None)
     w = mw.MainWindow()
-    btn = next(b for b in w.findChildren(QPushButton) if b.text() == "JYbooks")
+    btn = next(b for b in w._rip_page.findChildren(QPushButton) if b.text() == "JYbooks")
     btn.click()
     assert w.album.label == "JYbooks" and w.album_edits["label"].text() == "JYbooks"
     w.close()

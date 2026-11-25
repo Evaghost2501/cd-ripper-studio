@@ -246,6 +246,8 @@ QTableCornerButton::section {{ background: {c['surface']}; border: none; }}
 /* ---- tabs → chips ---- */
 QTabWidget::pane {{ border: 1px solid {c['line']}; border-radius: {r(16)}px; background: {c['surface']};
     top: -1px; }}
+QTabWidget#mainTabs::pane {{ border: none; background: transparent; }}
+QTabWidget#mainTabs > QTabBar {{ margin: {r(6)}px {r(10)}px 0 {r(10)}px; }}
 QTabBar::tab {{ background: transparent; color: {c['ink-muted']}; border: 1px solid {c['line']};
     border-radius: {pill}px; padding: {pad_v}px {chip_pad_h}px; margin: 0 {r(8)}px {r(8)}px 0; font-weight: 600;
     min-height: {ctl_h}px; }}

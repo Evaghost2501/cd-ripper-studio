@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
                                QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
                                QButtonGroup, QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter,
-                               QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
+                               QTableWidget, QTabWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
                                QWidget)
 
 from .. import __version__
@@ -120,6 +120,8 @@ class MainWindow(QMainWindow):
         self._fill_empty_only = False
         self._fit_timer = QTimer(self, singleShot=True, interval=0, timeout=self._fit_cover)
         self._align_timer = QTimer(self, singleShot=True, interval=0, timeout=self._align_bottom)
+        from .tag_editor import TagEditorState
+        self._tag_state = TagEditorState()        # survives UI-size rebuilds
         self._font_timer = QTimer(self, singleShot=True, interval=150,
                                   timeout=lambda: self.set_ui_size(self.ui_slider.value()))
         self._build_ui()
@@ -206,8 +208,14 @@ class MainWindow(QMainWindow):
             self, "정보", f"CD Ripper Studio {__version__}\n\nMusicBrainz · Cover Art Archive · iTunes · Deezer · "
                          "AccurateRip 데이터를 사용합니다.\nMP3 인코딩: LAME"))
 
+        # tabs: "CD 리핑" (everything below) and "음원 태그 편집" (existing files)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
+        self.tabs.setDocumentMode(True)
+        self.setCentralWidget(self.tabs)
         central = QWidget()
-        self.setCentralWidget(central)
+        self._rip_page = central
+        self.tabs.addTab(central, "CD 리핑")
         root = QVBoxLayout(central)
         split = QSplitter()
         root.addWidget(split, 1)
@@ -438,6 +446,11 @@ class MainWindow(QMainWindow):
         root.addWidget(self.logbox)
         self._apply_scale()
         split.setSizes([max(px(300), self.left_scroll.minimumWidth()), px(1000)])
+        from .tag_editor import TagEditorTab
+        self.tag_editor = TagEditorTab(self, self._tag_state)
+        self.tabs.addTab(self.tag_editor, "음원 태그 편집")
+        self.tabs.setCurrentIndex(getattr(self, "_tab_index", 0))
+        self.tabs.currentChanged.connect(lambda i: setattr(self, "_tab_index", i))
 
         idx = self.fmt.findData(self.s.format)
         self.fmt.setCurrentIndex(max(idx, 0))
@@ -517,6 +530,10 @@ class MainWindow(QMainWindow):
             # scroll bar: if it depended on whether the bar is shown, showing/hiding the bar would
             # resize the cover, which would show/hide the bar again … (an endless loop).
             bar = sc.verticalScrollBar().sizeHint().width()
+            need = sc.widget().minimumSizeHint().width() + bar + 2 * sc.frameWidth()
+            if sc.minimumWidth() < need:      # styled sizes are known only once shown
+                sc.setMinimumWidth(need)
+                sc.setMaximumWidth(max(sc.maximumWidth(), need))
             w = max(120, sc.width() - 2 * sc.frameWidth() - bar - m.left() - m.right())
             h = max(120, min(w, sc.viewport().height() - others - px(4)))
             if abs(w - lbl.width()) > 1 or abs(h - lbl.height()) > 1:
@@ -529,7 +546,7 @@ class MainWindow(QMainWindow):
         track list starts and grows/shrinks with it."""
         if hasattr(self, "status") and hasattr(self, "split"):
             from PySide6.QtCore import QPoint
-            cw = self.centralWidget()
+            cw = self._rip_page
             right_x = self.right.mapTo(cw, QPoint(0, 0)).x()          # where the track list starts
             left_x = cw.layout().contentsMargins().left()
             self.status.setFixedWidth(max(0, right_x - left_x - self._bottom_row.spacing()))

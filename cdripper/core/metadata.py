@@ -82,7 +82,7 @@ class AlbumMeta:
 
 def track_values(album: AlbumMeta, track: TrackMeta) -> dict:
     """Flat dict of every value usable in file-name templates and tags."""
-    total = len(album.tracks)
+    total = getattr(album, "_totaltracks", 0) or len(album.tracks)   # tag editor: keep the file's total
     return {
         "albumartist": album.albumartist or track.artist,
         "artist": track.artist or album.albumartist,
